@@ -1,13 +1,11 @@
 from types import SimpleNamespace
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 import numpy as np
 import math
 import torch
 import PIL.Image
-from csaps import csaps
 import os, sys
 import h5py
+import importlib
 
 os.environ["TOOLBOX_PATH"] = "/workspace/bart"
 sys.path.insert(0,os.environ["TOOLBOX_PATH"] + "/python/")
@@ -163,10 +161,13 @@ def create_dir(path):
 
 def bart_transform(sample):
     (Nk, Nc, Nz, Ny, Nx) = sample["shape"]
+
+    kspace = to_numpy(sample["kspace"])
+    smaps = to_numpy(sample["smaps"])
     
     return {
-        "kspace": sample["kspace"].T.reshape(Nx, Ny, Nz, Nc, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, Nk),
-        "smaps": sample["smaps"].T.reshape(Nx, Ny, Nz, Nc, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, Nk)
+        "kspace": kspace.T.reshape(Nx, Ny, Nz, Nc, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, Nk),
+        "smaps": smaps.T.reshape(Nx, Ny, Nz, Nc, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, Nk)
     }
 
 def bart_l1_wavelet_reconstruction(sample, regularization_parameter=0.0001):
@@ -246,3 +247,11 @@ def copySampleToGPU(entry):
         else:
             copy[k] = entry[k]
     return copy
+
+def import_file(python_file_path):
+    # import the model file
+    spec = importlib.util.spec_from_file_location("module.name", os.path.abspath(python_file_path))
+    file = importlib.util.module_from_spec(spec)
+    sys.modules["module.name"] = file
+    spec.loader.exec_module(file)
+    return file

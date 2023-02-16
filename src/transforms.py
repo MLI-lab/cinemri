@@ -23,6 +23,10 @@ def to_tensor(data):
         data = np.stack((data.real, data.imag), axis=-1)
     return torch.from_numpy(data)
 
+def to_numpy(data):
+    if torch.is_complex(data) or data.shape[-1] != 2:
+        return data.numpy()
+    return data[...,0].numpy() + 1j * data[...,1].numpy()
 
 def apply_mask(data, mask_func = None, mask = None, seed=None):
     """

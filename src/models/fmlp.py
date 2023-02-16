@@ -257,9 +257,9 @@ class ReconstructionMethod():
                 img = self.evaluate(sample)
                 self.tvloss.update_frame(sample["indices"], img)
 
-        max_ser = 0.
+        max_ser = float('-inf')
         max_ser_epoch = 0
-        max_ser_subset = 0.
+        max_ser_subset = float('-inf')
         validation_results = {}
 
         max_ssim = 0.
@@ -311,7 +311,10 @@ class ReconstructionMethod():
             # save a reconstructed video to TensorBoard
             if i%self.param.experiment.video_evaluation_frequency == 0 or i==self.param.hp.num_iter-1 or i == 1:
                 imgs = torch.stack([self.evaluate_abs(sample).detach().cpu() for sample in dataset], dim=0)
-                imgs /= torch.max(imgs)
+                if "max_intensity_value" in vars(self.param.data).keys():
+                    imgs /= self.param.data.max_intensity_value
+                else:
+                    imgs /= torch.max(imgs)
                 imgs = imgs.unsqueeze(dim=0) # format to: B=1, N, C=1, H, W
                 self.writer.add_video("video", imgs, i, self.param.data.frame_rate)
 

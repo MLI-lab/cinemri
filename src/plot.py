@@ -3,8 +3,6 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
 import math
-import torch
-import PIL.Image
 from matplotlib.patches import Ellipse
 
 

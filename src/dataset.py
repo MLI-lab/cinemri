@@ -5,35 +5,34 @@ import h5py
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import scipy.io as scipyio
 import pydicom
 from .transforms import *
 from .helpers import *
-from types import SimpleNamespace
 
 
 class CartesianDataset():
     """ 
     This is the parent class for all Cartesian datasets with dense data representation. The frequencies between the sampled coordiantes are zero. The implementation is memory inefficient but may be faster than storing the sampled coordiantes in a sparse manner, see `SparseCartesianDataset`. 
     """
-    def __init__(self, kspace, mask, smaps=None, reference=None, transform=None, additional_data=None):
+    def __init__(self, kspace, mask, smaps=None, reference=None, transform=None, additional_data=None, line_indices=None):
 
-        assert kspace.ndim == 5 and mask.ndim == 4
-        if smaps is not None: assert smaps.ndim == 4
+        assert kspace.ndim == 6 and mask.ndim == 4
+        if smaps is not None: assert smaps.ndim == 5
         if reference is not None: assert reference.ndim == 4
 
-        self.kspace = kspace # shape (Nk, Nc, Nz, Ny, Nx) numpy.ndarray complex
-        self.mask = mask # shape (Nk, Nz, Ny, Nx) numpy.ndarray np.int8
-        self.smaps = smaps # shape (Nc, Nz, Ny, Nx) numpy.ndarray complex
-        self.reference = reference # shape (Nk, Nz, Ny, Nx) numpy.ndarray complex
+        self.kspace = kspace # shape (Nk, Nc, Nz, Ny, Nx, 2) torch.tensor complex
+        self.mask = mask # shape (Nk, Nz, Ny, Nx) torch.tensor float32
+        self.smaps = smaps # shape (Nc, Nz, Ny, Nx, 2) torch.tensor float32
+        self.reference = reference # shape (Nk, Nz, Ny, Nx) torch.tensor complex
         self.transform = transform # function: transform(dict: sample) -> dict
         self.additional_data = additional_data # arbitrary data 
+        self.line_indices = line_indices
 
-        (self.Nk, self.Nc, self.Nz, self.Ny, self.Nx) = kspace.shape
+        self.Nk, self.Nc, self.Nz, self.Ny, self.Nx, _ = kspace.shape
 
     
     @classmethod
-    def from_matfile_sense2d(self, mat_file_path, transform=None, load_in_chunks=False):
+    def from_matfile_sense2d(self, matfile_path, transform=None, load_in_chunks=False):
         """
         Loads a SENSE dataset from a .mat file.
 
@@ -41,21 +40,20 @@ class CartesianDataset():
           - kspace: shape (Nk, Nc, Ny, Nx)
           - smaps: shape (Nc, Ny, Nx)
           - sampling_pattern (optional): shape (Nk, Ny)?
-
         """
-        with h5py.File(mat_file_path, 'r', rdcc_nbytes=1024**3, rdcc_w0=1, rdcc_nslots=1024) as f:
+        with h5py.File(matfile_path, 'r', rdcc_nbytes=1024**3, rdcc_w0=1, rdcc_nslots=1024) as f:
 
             sampling_pattern = None
             if "sampling_pattern" in f.keys():
-                sampling_pattern = np.array(f["sampling_pattern"]).squeeze()
+                sampling_pattern = torch.tensor(np.array(f["sampling_pattern"]).squeeze())
 
-            smaps = h5py2Complex(f['smaps'])
-            kspace_sense = h5py2Complex(f['kspace'], load_in_chunks=load_in_chunks) # replace this line and avoid duplicate data to save memory
+            smaps = to_tensor(h5py2Complex(f['smaps']))
+            kspace_sense = to_tensor(h5py2Complex(f['kspace'], load_in_chunks=load_in_chunks)) # replace this line and avoid duplicate data to save memory
 
-        assert smaps.ndim == 3 and kspace_sense.ndim == 4
+        assert smaps.ndim == 4 and kspace_sense.ndim == 5
 
-        (Nc, Ny, Nx) = smaps.shape
-        (Nk, _, Ny_sense, Nx_sense) =  kspace_sense.shape
+        (Nc, Ny, Nx, _) = smaps.shape
+        (Nk, _, Ny_sense, Nx_sense, _) =  kspace_sense.shape
 
         assert Nx == Nx_sense, "kx-space is assumed to have correct dimension"
 
@@ -64,26 +62,26 @@ class CartesianDataset():
             K_sense = math.floor(Ny / Ny_sense) # SENSE fator
 
             # zero-interleave the sampled k-space data -> the phase axis is sampled with uniform spacing
-            kspace = np.zeros((Nk, Nc, Ny, Nx), dtype=np.csingle)
+            kspace = torch.zeros((Nk, Nc, Ny, Nx, 2), dtype=torch.float32)
             kspace[:,:,2:(K_sense*Ny_sense+2):K_sense,:] = kspace_sense
 
             # create the sampling mask that corresponds to the zero-interleaving
-            mask = ((np.sum(np.abs(kspace), axis=1) > 0)*1).astype(np.int8)
+            mask = ((torch.sum(torch.abs(kspace), dim=1) > 0)*1.).type(np.float32)
         
         else: # kspace data already has the correct shape (same as smaps)
             kspace = kspace_sense
 
             # determine the mask by identifying non-zero entries in the k-space matrix # ! might be incorrect in some instances if all coils truely measure zero exactely
-            mask = ((np.sum(np.abs(kspace), axis=1) > 0)*1).astype(np.int8)
+            mask = ((torch.sum(torch.abs(kspace), dim=1) > 0)*1.).type(np.float32)
             if sampling_pattern is not None:
-                mask *= np.tile(sampling_pattern.reshape((Ny, 1)), (1, Nx))
+                mask *= torch.tile(sampling_pattern.reshape((Ny, 1)), (1, Nx))
                 for k in range(Nk):
                     for c in range(Nc):
                         kspace[k,c,:,:] *= mask[k,:,:]
 
-        kspace = np.expand_dims(kspace, axis=2)
-        mask = np.expand_dims(mask, axis=1)
-        smaps = np.expand_dims(smaps, axis=1)
+        kspace = kspace.unsqueeze(dim=2)
+        mask = mask.unsqueeze(dim=1)
+        smaps = smaps.unsqueeze(dim=1)
 
         return self(kspace, mask, smaps, transform=transform)
 
@@ -99,7 +97,7 @@ class CartesianDataset():
           - `<base_path_and_name>_add.pth` (if additional_data exists)
           - `<base_path_and_name>_ref.npy` (if reference exists)
 
-        Use `dataset.saveToNpyFiles` for generating the respective .npy files from other dataset formats.
+        Use `dataset.saveToNpyFiles` for generating the mentioned .npy files from other dataset formats.
         """
 
         kspace = np.load("{}_kspace.npy".format(base_path_and_name))
@@ -113,6 +111,10 @@ class CartesianDataset():
         additional_data = None
         if os.path.isfile("{}_add.pth".format(base_path_and_name)):
             additional_data = torch.load("{}_add.pth".format(base_path_and_name))
+            
+        line_indices = None
+        if os.path.isfile("{}_lines.npy".format(base_path_and_name)):
+            line_indices = np.load("{}_lines.npy".format(base_path_and_name))
 
 
         if kspace.ndim == 4: # this is 2D dataset -> expand to 3D
@@ -121,16 +123,22 @@ class CartesianDataset():
             smaps = np.expand_dims(smaps, axis=1)
             if reference is not None: reference = np.expand_dims(reference, axis=1)
 
-        return self(kspace, mask, smaps, reference, transform, additional_data=additional_data)
+        # convert to torch.tensor
+        kspace = to_tensor(kspace)
+        mask = torch.tensor(mask, dtype=torch.float32)
+        smaps = to_tensor(smaps)
+        if reference is not None: reference = torch.tensor(reference)
+
+        return self(kspace, mask, smaps, reference, transform, additional_data=additional_data, line_indices=line_indices)
 
 
     @classmethod
-    def from_sparse_matfile2d(self, mat_file_path, transform=None, shift=False, skip_outliers=False, remove_padding=False, set_smaps_outside_to_one=False):
+    def from_sparse_matfile2d(self, matfile_path, listfile_path, transform=None, shift=False, skip_outliers=False, remove_padding=False, set_smaps_outside_to_one=False):
         """ 
-        Loads `mat_file_path` that stores measurement data without zeros in the k-space (sparse respresentation of data)
+        Loads `matfile_path` that stores measurement data without zeros in the k-space (sparse respresentation of data)
         -> the measured ky-lines are copied to the correct positions in the k-space matrix by this method
 
-        Requires the `mat_file_path + '.list'` file for copying the measurements to the correct location in the k-space matrix.
+        Requires the `matfile_path + '.list'` file for copying the measurements to the correct location in the k-space matrix.
 
         Parameters:
         - `transform`: An optional function that is applied to every sample data loaded from the dataset with the get_item() method.
@@ -140,226 +148,122 @@ class CartesianDataset():
         - `set_smaps_outside_to_one`: By default, the smaps estimated by the scanner have zero entries outside the human body (they cannot be estimated outside, as there is no signal). Thus, the reconstructions can take arbitrary values outside the body without affecting the reconstruction loss. If `set_smaps_outside_to_one` is true, the zero-sensitivities are set to 1.0. By setting the smaps outside to 1.0, the reconstructions are forced to zero outside the human body.
         """
 
-        self.list_data = ListData(file_name=mat_file_path+".list")
+        list_data = ListData(file_name=listfile_path)
 
-        # detect datasets that are binned by cardiac phases -> handle them separately as they probably use the SENSE pattern
-        if self.list_data.Nk_card > 1:
-            return self.from_sparse_matfile_sense_cardiac_trig2d(self, mat_file_path, transform=transform, shift=shift, remove_padding=remove_padding, set_smaps_outside_to_one=set_smaps_outside_to_one)
-
-        # helper method to parse Matlab structs
-        def parse_struct(f):
-            if isinstance(f, h5py._hl.group.Group):
-                d = dict()
-                for k in f.keys():
-                    if k == "AutoListeners__":
-                        continue
-                    d[k] = parse_struct(f[k])
-                return d
-            elif isinstance(f, h5py._hl.dataset.Dataset):
-                return np.array(f).squeeze()
-            return (type(f), f)
-        
         # load matrices from the .mat file
         self.noise = None
-        with h5py.File(mat_file_path, 'r', rdcc_nbytes=1024**3, rdcc_w0=1, rdcc_nslots=1024) as f:
-            smaps = h5py2Complex(f["smaps"], load_in_chunks=False)
-            kspace = h5py2Complex(f["kspace"], load_in_chunks=False)
+        with h5py.File(matfile_path, 'r', rdcc_nbytes=1024**3, rdcc_w0=1, rdcc_nslots=1024) as f:
+            raw_smaps = h5py2Complex(f["smaps"], load_in_chunks=False)
+            raw_kspace = h5py2Complex(f["kspace"], load_in_chunks=False)
             reference = np.array(f["reference"])
             if "noise" in f.keys():
                 # contains noise measurements that can be used to estimate noise statistics of the receiver coils
-                self.noise = h5py2Complex(f["noise"], load_in_chunks=False)
-            self.encoding_pars = parse_struct(f["encoding_pars"])
+                self.noise = torch.tensor(h5py2Complex(f["noise"], load_in_chunks=False))
+            encoding_pars = parse_struct(f["encoding_pars"])
+
+
+        # detect datasets that are binned by cardiac phases -> handle them separately as they probably use the SENSE pattern
+        if list_data.Nk_card > 1:
+            Nk = list_data.Nk_card            
+        else:
+            Nk = list_data.Nk
 
         # if required, set the zero pixels of the smaps (outside the body) to 1.0
         if set_smaps_outside_to_one:
-            smaps[smaps == 0.] = 1.
+            raw_smaps[raw_smaps == 0.] = 1.
+        smaps = to_tensor(raw_smaps)
 
+        Nc = smaps.shape[0]
         # if required, remove the zero-padding from the k-space and truncate the smaps in the Fourier domain
-        if not remove_padding: # keep the padding
-            self.smaps = smaps
-            self.Nc, self.Ny, self.Nx = smaps.shape
-            self.Nk = self.list_data.Nk
-        else: # remove the padding
-
+        k_sense = 1
+        if remove_padding:
             # compute the resolution in x-direction without padding
-            self.Nx = int(self.encoding_pars["KxRange"][1] - self.encoding_pars["KxRange"][0] + 1)
+            Nx = int(encoding_pars["KxRange"][1] - encoding_pars["KxRange"][0] + 1)
 
-            # compute the resolution in y-direction without padding
-            if -self.encoding_pars["KyRange"][0] == self.encoding_pars["KyRange"][1] + 1: # standard case
-                self.Ny = int(self.encoding_pars["KyRange"][1] - self.encoding_pars["KyRange"][0] + 1)
-            elif -self.encoding_pars["KyRange"][0] < self.encoding_pars["KyRange"][1]: # probably partial-Fourier
-                self.Ny = int(2 * self.encoding_pars["KyRange"][1])
-            else: # unknown case
-                print(self.encoding_pars["KyRange"], smaps.shape[2])
-                raise Exception
+            if list_data.Nk_card > 1:
+                # compute the SENSE factor
+                k_sense = int(encoding_pars["YRes"] / (int(encoding_pars["KyRange"][1] - encoding_pars["KyRange"][0] + 1)))
+                Ny = int(encoding_pars["KyRange"][1] - encoding_pars["KyRange"][0] + 1) * k_sense
+            else:
+                # compute the resolution in y-direction without padding
+                if -encoding_pars["KyRange"][0] == encoding_pars["KyRange"][1] + 1: # standard case
+                    Ny = int(encoding_pars["KyRange"][1] - encoding_pars["KyRange"][0] + 1)
+                elif -encoding_pars["KyRange"][0] < encoding_pars["KyRange"][1]: # probably partial-Fourier
+                    Ny = int(2 * encoding_pars["KyRange"][1])
+                else: # unknown case
+                    print(encoding_pars["KyRange"], smaps.shape[2])
+                    raise Exception
 
-            self.Nc = smaps.shape[0]
-            self.Nk = self.list_data.Nk
-
-            _, Nyold, Nxold = smaps.shape
+            _, Nyold, Nxold, _ = smaps.shape
 
             # truncate the smaps in the Fourier domain
-            Nystart, Nxstart = int((Nyold - self.Ny) / 2), int((Nxold - self.Nx) / 2)
+            Nystart, Nxstart = int((Nyold - Ny) / 2), int((Nxold - Nx) / 2)
 
-            smaps = to_tensor(smaps)
             smaps_fft = fft2(smaps)
-            smaps_fft = smaps_fft[:,Nystart:(Nystart+self.Ny), Nxstart:(Nxstart+self.Nx), :]
+            smaps_fft = smaps_fft[:,Nystart:(Nystart+Ny), Nxstart:(Nxstart+Nx), :]
             smaps = ifft2(smaps_fft)
 
-            self.smaps = smaps.numpy()
-            self.smaps = self.smaps[:,:,:,0] + 1j * self.smaps[:,:,:,1]
-
+        else:
+            Nc, Ny, Nx, _ = smaps.shape
+        
         # create zero matrices where the sparse data is filled into
-        self.kspace = np.zeros((self.Nk, self.Nc, self.Ny, self.Nx), dtype=np.csingle)
-        self.mask = np.zeros((self.Nk, self.Ny, self.Nx), dtype=np.uint8)
+        kspace = torch.zeros((Nk, Nc, Ny, Nx, 2), dtype=torch.float32)
+        mask = torch.zeros((Nk, Ny, Nx), dtype=torch.float32)
 
-        num_lines, Nx_raw = kspace.shape
-        # get a lists that contains the following information for every ky-line in the matrix `kspace`: index of the dynamic, index of the coil, ky indices (shifted)
-        dynamics, coil_indices, ky_indices = self.list_data.get_dynamics_channel_indices_and_kyindices()
+        num_lines, Nx_raw = raw_kspace.shape
+
+        if list_data.Nk_card > 1:
+            # get a lists that contains the following information for every ky-line in the matrix `raw_kspace`: index of the cardiac dynamic, index of the coil, ky indices (shifted)
+            dynamics, coil_indices, ky_indices = list_data.get_cardiac_bins_channel_indices_and_kyindices()
+        else:
+            # get a lists that contains the following information for every ky-line in the matrix `raw_kspace`: index of the dynamic, index of the coil, ky indices (shifted)
+            dynamics, coil_indices, ky_indices = list_data.get_dynamics_channel_indices_and_kyindices()
+        
 
         # find the zero index of the k-space matrix in ky-direction
-        ky_zero_index = int(self.Ny / 2)
+        ky_zero_index = int(Ny / 2)
 
         # find the first kx index that should be filled with data
-        kx_shift = int(self.Nx / 2 - Nx_raw / 2)
+        kx_shift = int(Nx / 2 - Nx_raw / 2)
 
         for i in range(num_lines):
             k = dynamics[i]
             c = coil_indices[i]
             ky = ky_indices[i]
 
-            ky_shifted = ky_zero_index + ky
+            ky_shifted = ky_zero_index + ky * k_sense
 
-            if skip_outliers and ky > self.Ny / 2 or ky < -self.Ny / 2:
+            if skip_outliers and ky > Ny / 2 or ky < -Ny / 2:
                 continue
 
-            self.kspace[k, c, ky_shifted, kx_shift:kx_shift+Nx_raw] = kspace[i, :]
+            mask[k, ky_shifted, kx_shift:kx_shift+Nx_raw] = 1.
             if shift:
-                self.kspace[k, c, ky_shifted, :] *= np.exp(self.Ny*np.pi*1j*(ky_shifted/self.Ny - 0.5))
-            self.mask[k, ky_shifted, kx_shift:kx_shift+Nx_raw] = 1
-
+                kspace[k, c, ky_shifted, kx_shift:kx_shift+Nx_raw, :] = to_tensor(raw_kspace[i, :] * np.exp(1j*np.pi*(ky_shifted - Ny/2)))
+            else:
+                kspace[k, c, ky_shifted, kx_shift:kx_shift+Nx_raw, :] = to_tensor(raw_kspace[i, :])
+            
         # if reference data is available, the reference matrix has at least 3 dimensions
-        self.reference = None
-        if reference.ndim >= 3:
-            self.reference = reference
+        if reference.ndim < 3:
+            reference = None
 
         # insert dimensions for the z-axis (that is not used since this method handles 2D datasets with a single slice)
-        self.kspace = np.expand_dims(self.kspace, axis=2)
-        self.mask = np.expand_dims(self.mask, axis=1)
-        self.smaps = np.expand_dims(self.smaps, axis=1)
-        if self.reference is not None: self.reference = np.expand_dims(self.reference, axis=1)
+        kspace = kspace.unsqueeze(dim=2)
+        mask = mask.unsqueeze(dim=1)
+        smaps = smaps.unsqueeze(dim=1)
+        if reference is not None: reference = torch.tensor(reference).unsqueeze(dim=1)
 
-        return self(self.kspace, self.mask, self.smaps, reference=self.reference, transform=transform)
+        return self(kspace, mask, smaps, reference=reference, transform=transform)
 
-    
-    def from_sparse_matfile_sense_cardiac_trig2d(self, mat_file_path, remove_padding=False, set_smaps_outside_to_one=False, shift=False, transform=None):
-        """ 
-        Loads `mat_file_path` that stores measurement data without zeros in the k-space (sparse respresentation of data). Use this method, if the data is binned by cardiac phase and is recorded with a SENSE pattern.
-
-        Requires the `mat_file_path + '.list'` file for copying the measurements to the correct location in the k-space matrix.
-
-        Parameters:
-        - `transform`: An optional function that is applied to every sample data loaded from the dataset with the get_item() method.
-        - `shift`: If true, the image is shifted by Ny/4. This is necessary if the k-space data does not match the smaps otherwise.
-        - `remove_padding`: By default, the k-space data of the scanner is zero-padded and the smaps are computed on a larger grid. If `remove_padding` is true, the padding is removed and the smaps are cropped in the Fourier domain.
-        - `set_smaps_outside_to_one`: By default, the smaps estimated by the scanner have zero entries outside the human body (they cannot be estimated outside, as there is no signal). Thus, the reconstructions can take arbitrary values outside the body without affecting the reconstruction loss. If `set_smaps_outside_to_one` is true, the zero-sensitivities are set to 1.0. By setting the smaps outside to 1.0, the reconstructions are forced to zero outside the human body.
-        """
-        
-        list_data = ListData(file_name=mat_file_path+".list")
-
-        def parse_struct(f):
-            if isinstance(f, h5py._hl.group.Group):
-                d = dict()
-                for k in f.keys():
-                    if k == "AutoListeners__":
-                        continue
-                    d[k] = parse_struct(f[k])
-                return d
-            elif isinstance(f, h5py._hl.dataset.Dataset):
-                return np.array(f).squeeze()
-            return (type(f), f)
-
-
-        # noise = None
-        with h5py.File(mat_file_path, 'r', rdcc_nbytes=1024**3, rdcc_w0=1, rdcc_nslots=1024) as f:
-            smaps = h5py2Complex( f["smaps"], load_in_chunks=False)
-            kspace = h5py2Complex( f["kspace"], load_in_chunks=False)
-            reference = np.array(f["reference"])
-            if "noise" in f.keys():
-                self.noise = h5py2Complex( f["noise"], load_in_chunks=False)
-            encoding_pars = parse_struct(f["encoding_pars"])
-
-        # compute the SENSE factor
-        k_sense = int(encoding_pars["YRes"] / (int(encoding_pars["KyRange"][1] - encoding_pars["KyRange"][0] + 1)))
-
-
-        if set_smaps_outside_to_one:
-            smaps[smaps == 0.] = 1.
-
-        if not remove_padding:
-            Nc, Ny, Nx = smaps.shape
-            Nk = list_data.Nk_card
-        else:
-            Nx = int(encoding_pars["KxRange"][1] - encoding_pars["KxRange"][0] + 1)
-
-            # compute the resolution in ky-direction taking into account the SENSE factor
-            Ny = int(encoding_pars["KyRange"][1] - encoding_pars["KyRange"][0] + 1) * k_sense
-            Nc = smaps.shape[0]
-            Nk = list_data.Nk_card
-
-            _, Nyold, Nxold = smaps.shape
-
-            Nystart, Nxstart = int((Nyold - Ny) / 2), int((Nxold - Nx) / 2)
-
-            smaps = to_tensor(smaps)
-            smaps_fft = fft2(smaps)
-            smaps_fft = smaps_fft[:,Nystart:(Nystart+Ny), Nxstart:(Nxstart+Nx), :]
-            smaps = ifft2(smaps_fft)
-
-            smaps = smaps.numpy()
-            smaps = smaps[:,:,:,0] + 1j * smaps[:,:,:,1]
-
-        full_kspace = np.zeros((Nk, Nc, Ny, Nx), dtype=np.csingle)
-        mask = np.zeros((Nk, Ny, Nx), dtype=np.uint8)
-
-        num_lines, Nx_raw = kspace.shape
-        cards, coil_indices, ky_indices = list_data.get_cardiac_bins_channel_indices_and_kyindices()
-
-        ky_zero_index = int(Ny / 2)
-        kx_shift = int(Nx / 2 - Nx_raw / 2)
-
-        for i in range(num_lines):
-            k = cards[i]
-            c = coil_indices[i]
-            ky = ky_indices[i]
-
-            ky_shifted = ky_zero_index + ky*k_sense
-
-            full_kspace[k, c, ky_shifted, kx_shift:kx_shift+Nx_raw] = kspace[i, :]
-            if shift:
-                full_kspace[k, c, ky_shifted, :] *= np.exp(Ny*np.pi*1j*(ky_shifted/Ny - 0.5))
-            mask[k, ky_shifted, kx_shift:kx_shift+Nx_raw] = 1
-
-        final_reference = None
-        if reference.ndim >= 3:
-            final_reference = reference
-
-        full_kspace = np.expand_dims(full_kspace, axis=2)
-        mask = np.expand_dims(mask, axis=1)
-        smaps = np.expand_dims(smaps, axis=1)
-        if final_reference is not None: final_reference = np.expand_dims(reference, axis=1)
-
-        return self(full_kspace, mask, smaps, final_reference, transform=transform)
 
     @classmethod
-    def rebin_cartesian_dataset_extract_validationset(self, dataset, listfile_path, num_lines_per_frame, validation_percentage, sample_period, seed=1998, max_Nk=-1):
+    def rebin_cartesian_dataset_extract_validationset(self, dataset, listfile_path, number_of_lines_per_frame, validation_percentage, seed=1998, max_Nk=-1, transform=None):
         """
-        This method extracts a validation dataset from the sampled lines and rebins the remaining lines into frames with `num_lines_per_frame`.
+        This method extracts a validation dataset from the sampled lines and rebins the remaining lines into frames with `number_of_lines_per_frame`.
 
         Parameters:
         - `dataset`: the CartesianDataset that needs to be rebinned
         - `listfile_path`: path to the .list file that belongs to the dataset (used for looking-up the order of the sampled lines)
-        - `num_lines_per_frame`: number of lines per frame after re-binning
+        - `number_of_lines_per_frame`: number of lines per frame after re-binning
         - `validation_percentage`:  percentage of the sampled ky-lines that is randomly extracted as a validation set
         - `sample_period`: sample period between consecutive ky-lines (=TR for single-echo sequences). This information is used to compute the frame times t_k of the rebinned frames that are stored in the `additional_data` attribute of the retured rebinned dataset.
         - `seed`: seed for the random number generator that randomly selects the validation lines
@@ -384,35 +288,31 @@ class CartesianDataset():
         validation_subset = validation_subset[0:int(N_ky_lines * validation_percentage / 100)]
 
         # re-bin lines
-        Nk = (N_ky_lines - len(validation_subset)) // num_lines_per_frame
+        Nk = (N_ky_lines - len(validation_subset)) // number_of_lines_per_frame
         if max_Nk > 0:
             Nk = min(Nk, max_Nk)
         _, Nc, _, Ny, Nx = dataset.shape()
 
-        kspace = np.zeros((Nk, Nc, 1, Ny, Nx), dtype=np.complex64)
-        mask = np.zeros((Nk, 1, Ny, Nx), dtype=np.int8)
+        kspace = torch.zeros((Nk, Nc, 1, Ny, Nx, 2), dtype=torch.float32)
+        mask = torch.zeros((Nk, 1, Ny, Nx), dtype=torch.float32)
+        line_indices = torch.zeros((Nk, number_of_lines_per_frame), dtype=torch.int64)
 
         ky_zero_index = int(Ny / 2)
         validation_set = []
 
         
-        sample_times = np.arange(start=0, stop=N_ky_lines, step=1) * sample_period
-        additional_data = SimpleNamespace()
-        additional_data.t_k = [] # stores the mean time of a frame (t_k_begin[k] + t_k_end[k])/2
-        additional_data.t_k_begin = [] # stores the sampling time of the first line within each frame
-        additional_data.t_k_end = [] # stores the sampling time of the last line within each frame
 
         j = 0
         for k in range(Nk):
-            for i in range(num_lines_per_frame):
+            for i in range(number_of_lines_per_frame):
                 while j in validation_subset: # extract the line into the validation set
                     ky = ky_zero_index + ky_indices[j] # get ky index in kspace tensor
 
                     # convert mask and kspace to sparse representation
-                    kx_indices = np.nonzero(dataset.mask[dynamics[j], 0, ky, :])[0]
+                    kx_indices = torch.nonzero(dataset.mask[dynamics[j], 0, ky, :])[:, 0]
                     Nr = kx_indices.shape[0]
-                    mask_sparse = np.stack((np.zeros(Nr), np.ones(Nr) * ky, kx_indices), axis=1)
-                    kspace_sparse = dataset.kspace[dynamics[j], :, 0, ky, kx_indices]
+                    mask_sparse = torch.stack((torch.zeros(Nr), torch.ones(Nr) * ky, kx_indices), axis=1).reshape((1,1,Nr,3)).type(torch.int64)
+                    kspace_sparse = dataset.kspace[dynamics[j], :, 0, ky, kx_indices, :].reshape((1, Nc, 1, Nr, 2))
 
                     validation_set.append({
                         "line_index": j,
@@ -426,31 +326,17 @@ class CartesianDataset():
                 ky = ky_zero_index + ky_indices[j] # get ky index in kspace tensor
                 kspace[k, :, :, ky, :] = dataset.kspace[dynamics[j], :, :, ky, :]
                 mask[k, :, ky, :] = dataset.mask[dynamics[j], :, ky, :]
-
-                if i == 0:
-                    additional_data.t_k.append(sample_times[j])
-                    additional_data.t_k_begin.append(sample_times[j])
-                if i == num_lines_per_frame-1:
-                    additional_data.t_k_end.append(sample_times[j])
-                    additional_data.t_k[-1] += sample_times[j]
-                    additional_data.t_k[-1] /= 2.
+                line_indices[k, i] = j
 
                 j += 1
 
         reference = dataset.reference
 
-        # if the dataset contains reference images for all sampled lines (possible with phantom data), extract a reference dataset with reference images that are closest to the frame time t_k
-        if dataset.reference is not None and dataset.reference.shape[0] == N_ky_lines:
-            reference = np.zeros((Nk, 1, Ny, Nx), dtype=np.float32)
-            for i, t_k in enumerate(additional_data.t_k):
-                closest_line_index = int(np.round(t_k / sample_period))
-                reference[i, 0, :, :] = dataset.reference[closest_line_index, 0, :, :]
-
         np.random.set_state(random_state) # restore the state of the RNG
-        return self(kspace, mask, dataset.smaps, reference=reference, transform=dataset.transform, additional_data=additional_data), validation_set
+        return self(kspace, mask, dataset.smaps, line_indices=line_indices, reference=reference, transform=transform), validation_set
 
     @classmethod
-    def from_cartesian_dataset(self, cartesian_dataset, transform=None):
+    def from_cartesian_dataset(self, dataset, transform=None):
         """
         Creates a shallow copy (underlying data remains identical).
         
@@ -461,38 +347,8 @@ class CartesianDataset():
         slice_dataset = CartesianSliceDataset.from_cartesian_dataset(dataset, transform=...)
         ```
         """
-        return self(cartesian_dataset.kspace, cartesian_dataset.mask, cartesian_dataset.smaps, reference=cartesian_dataset.reference, transform=transform, additional_data=cartesian_dataset.additional_data)
-
-    @classmethod
-    def reduce_resolution(self, dataset, Ny, Nx, transform=None):
-        """
-        This method crops the k-space measurements to obtain a low-pass filtered version of the dataset with a reduced resolution.
-
-        """
-        Nx_old = dataset.Nx
-        Ny_old = dataset.Ny
-
-        assert (Ny % 2 == 0 and Ny_old % 2 == 0) or (Ny % 2 == 1 and Ny_old % 2 == 1)
-        assert (Nx % 2 == 0 and Nx_old % 2 == 0) or (Nx % 2 == 1 and Nx_old % 2 == 1)
-
-        Ny_start = (Ny_old - Ny) // 2
-        Nx_start = (Nx_old - Nx) // 2
-        Ny_end = Ny_start + Ny
-        Nx_end = Nx_start + Nx
-
-        kspace = dataset.kspace[:, :, :, Ny_start:Ny_end, Nx_start:Nx_end].copy()
-        mask = dataset.mask[:, :, Ny_start:Ny_end, Nx_start:Nx_end].copy()
-        
-        smaps_tensor = to_tensor(dataset.smaps)
-        smaps_fft = fft2(smaps_tensor)
-        smaps_fft = smaps_fft[:, :, Ny_start:Ny_end, Nx_start:Nx_end, :]
-        smaps_tensor = ifft2(smaps_fft)
-
-        smaps = smaps_tensor.numpy()
-        smaps = smaps[:,:,:,:,0] + 1j * smaps[:,:,:,:,1]
-
-        return self(kspace, mask, smaps, reference=None, transform=transform, additional_data=dataset.additional_data)
-
+        return self(dataset.kspace, dataset.mask, dataset.smaps, reference=dataset.reference, transform=transform, additional_data=dataset.additional_data, line_indices=dataset.line_indices)
+    
 
     def shape(self):
         """
@@ -505,56 +361,23 @@ class CartesianDataset():
         """
         Saves the entire dataset to .npy files that can be loaded efficiently.
         """
+
+        def to_numpy(tensor):
+            if tensor.shape[-1] == 2: # interpret as complex
+                return np.array(tensor[..., 0] + 1j*tensor[..., 1], dtype=np.complex64)
+            return np.array(tensor)
+
         with open("{}_kspace.npy".format(base_path_and_name), "wb") as f:
-            np.save(f, self.kspace)
+            np.save(f, to_numpy(self.kspace))
         with open("{}_smaps.npy".format(base_path_and_name), "wb") as f:
-            np.save(f, self.smaps)
+            np.save(f, to_numpy(self.smaps))
         with open("{}_mask.npy".format(base_path_and_name), "wb") as f:
-            np.save(f, self.mask)
+            np.save(f, to_numpy(self.mask))
         if not self.reference is None:
             with open("{}_ref.npy".format(base_path_and_name), "wb") as f:
-                np.save(f, self.reference)
+                np.save(f, to_numpy(self.reference))
         if self.additional_data is not None:
             torch.save("{}_add.pth".format(base_path_and_name), self.additional_data)
-
-    
-    # load .mat Files containing nested structs
-    # source: https://stackoverflow.com/questions/7008608/scipy-io-loadmat-nested-structures-i-e-dictionaries
-    def loadmat(self, filename):
-        """
-        Helper method for loading .mat files containing nested structs.
-        """
-        def _check_keys(dict):
-            '''
-            checks if entries in dictionary are mat-objects. If yes
-            todict is called to change them to nested dictionaries
-            '''
-            for key in dict:
-                if isinstance(dict[key], scipyio.matlab.mio5_params.mat_struct):
-                    dict[key] = _todict(dict[key])
-            return dict        
-
-        def _todict(matobj):
-            '''
-            A recursive function which constructs from matobjects nested dictionaries
-            '''
-            dict = {}
-            for strg in matobj._fieldnames:
-                elem = matobj.__dict__[strg]
-                if isinstance(elem, scipyio.matlab.mio5_params.mat_struct):
-                    dict[strg] = _todict(elem)
-                else:
-                    dict[strg] = elem
-            return dict
-
-        '''
-        This function should be called instead of direct scipyio.loadmat
-        as it cures the problem of not properly recovering python dictionaries
-        from mat files. It calls the function check keys to cure all entries
-        which are still mat-objects
-        '''
-        data = scipyio.loadmat(filename, struct_as_record=False, squeeze_me=True)
-        return _check_keys(data)
 
 
     def subset(self, subset_indices):
@@ -599,17 +422,21 @@ class CartesianSliceDataset(CartesianDataset):
             raise Exception("invalid index format")
 
         Nk = len(indices)
-        mask = np.zeros((Nk, 1, self.Ny, self.Nx), dtype=np.int8)
-        kspace = np.zeros((Nk, self.Nc, 1, self.Ny, self.Nx), dtype=np.csingle)
+        mask = torch.zeros((Nk, self.Ny, self.Nx), dtype=torch.float32)
+        kspace = torch.zeros((Nk, self.Nc, self.Ny, self.Nx, 2), dtype=torch.float32)
         for n, index in enumerate(indices):
-            mask[n, 0, :, :] = self.mask[index, z, :, :]
-            kspace[n, :, 0, :, :] = self.kspace[index, :, z, :, :]
+            mask[n, :, :] = self.mask[index, z, :, :]
+            kspace[n, :, :, :, :] = self.kspace[index, :, z, :, :, :]
 
         reference = None
-        if not self.reference is None:
-            reference = np.zeros((Nk, 1, self.Ny, self.Nx), dtype=np.csingle)
+        if self.reference is not None:
+            reference = torch.zeros((Nk, self.Ny, self.Nx), dtype=torch.complex64)
             for n, index in enumerate(indices):
-                reference[n, 0, :, :] = self.reference[index, z, :, :]
+                reference[n, :, :] = self.reference[index, z, :, :]
+
+        line_indices = None
+        if self.line_indices is not None:
+            line_indices = self.line_indices[indices, :]
 
         sample = {
             'indices': indices,
@@ -619,7 +446,8 @@ class CartesianSliceDataset(CartesianDataset):
             'mask': mask,
             'reference': reference,
             'shape': (Nk, self.Nc, 1, self.Ny, self.Nx),
-            'additional_data': self.additional_data
+            'additional_data': self.additional_data,
+            'line_indices': line_indices
         }
 
         if(self.transform):
@@ -684,7 +512,7 @@ class SparseCartesianDataset():
                                                          seed=1998
                                                          ):
         """ 
-        Loads `mat_file_path` that stores measurement data without zeros in the k-space (sparse respresentation of data).
+        Loads `matfile_path` that stores measurement data without zeros in the k-space (sparse respresentation of data).
         Requires `listfile_path` that contains information about the order and position of the measured k-space lines.
         Randomly extracts `validation_percentage` percent of the k-space lines for validation.
         Bins the remaining lines into frames with `number_of_lines_per_frame` lines each. If `max_Nk` is specified, the number of frames is reduced and excess frames are discarded.
@@ -789,13 +617,13 @@ class SparseCartesianDataset():
 
                 ky = ky_indices[l*Nc]
                 ky_index = ky_zero_index + ky
-                ky_coordinate = np.pi * ky / Ny
+                ky_coordinate = 2. * np.pi * ky / Ny
 
                 if shift:
                     line_kspace *= np.exp(np.pi*1j*(ky_index - Ny/2))
 
                 kx_indices = kx_shift + np.arange(Nr)
-                kx_coordinates = np.pi * (-int(Nr/2) + np.arange(Nr)) / Nx
+                kx_coordinates = 2. * np.pi * (-int(Nr/2) + np.arange(Nr)) / Nx
 
                 line_mask = np.stack((np.zeros(Nr), np.ones(Nr)*ky_index, kx_indices), axis=-1)
                 line_trajectory = np.stack((np.zeros(Nr), np.ones(Nr)*ky_coordinate, kx_coordinates), axis=-1)
@@ -1012,7 +840,7 @@ class NonCartesianDataset3D():
         self.Nk, self.Nc, self.Nz, self.Ny, self.Nx = shape
     
     @classmethod
-    def from_mat_file_binned_validation(self, matfile_path, listfile_path, num_lines_per_frame, validation_percentage, transform=None, load_in_chunks=False, seed=1998, convert_to_rad=True, has_norm_fac=False, transpose_smaps=True, max_Nk=-1):
+    def from_mat_file_binned_validation(self, matfile_path, listfile_path, number_of_lines_per_frame, validation_percentage, transform=None, load_in_chunks=False, seed=1998, convert_to_rad=True, has_norm_fac=False, transpose_smaps=True, max_Nk=-1):
         random_state = np.random.get_state() # only change the seed locally -> restore later
         np.random.seed(seed)
         with h5py.File(matfile_path, 'r', rdcc_nbytes=1024**3, rdcc_w0=1, rdcc_nslots=1024) as f:
@@ -1047,20 +875,20 @@ class NonCartesianDataset3D():
 
         num_training_lines = num_lines - len(validation_subset)
 
-        Nk = int(math.floor(num_training_lines / num_lines_per_frame))
+        Nk = int(math.floor(num_training_lines / number_of_lines_per_frame))
         if max_Nk > 0:
             Nk = min(Nk, max_Nk)
 
-        kspace_binned = torch.empty((Nk, Nc, num_lines_per_frame, readout_len, 2), dtype=torch.float32)
-        trajectory_binned = torch.empty((Nk, num_lines_per_frame, readout_len, 3), dtype=torch.float32)
-        weights_binned = torch.empty((Nk, num_lines_per_frame, readout_len), dtype=torch.float32)
-        line_indices = torch.empty((Nk, num_lines_per_frame), dtype=torch.int64)
+        kspace_binned = torch.empty((Nk, Nc, number_of_lines_per_frame, readout_len, 2), dtype=torch.float32)
+        trajectory_binned = torch.empty((Nk, number_of_lines_per_frame, readout_len, 3), dtype=torch.float32)
+        weights_binned = torch.empty((Nk, number_of_lines_per_frame, readout_len), dtype=torch.float32)
+        line_indices = torch.empty((Nk, number_of_lines_per_frame), dtype=torch.int64)
 
         validation_set = []
 
         j = 0
         for k in range(Nk):
-            for i in range(num_lines_per_frame):
+            for i in range(number_of_lines_per_frame):
                 while j in validation_subset:
                     ky = ky_indices[j]
             
@@ -1256,7 +1084,7 @@ class DatasetCache(CartesianDataset):
         if idx in self.cacheDataGPU:
             return self.apply_transform(self.cacheDataGPU[idx])
 
-        if idx in self.cacheData: # cache hit
+        if idx in self.cacheData:
             return self.apply_transform(self.copyToGPU(self.cacheData[idx]))
         
         sample = self.dataset[idx]
