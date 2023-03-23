@@ -243,7 +243,7 @@ def copySampleToGPU(entry):
     copy = {}
     for k in entry.keys():
         if torch.is_tensor(entry[k]):
-            copy[k] = entry[k].to("cuda") # does detach make it faster?
+            copy[k] = entry[k].clone().to("cuda") # does detach make it faster?
         else:
             copy[k] = entry[k]
     return copy

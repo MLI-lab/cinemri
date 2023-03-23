@@ -224,7 +224,7 @@ class ReconstructionMethod():
         return squared_errors
 
     def evaluate(self, sample):
-        img = self.fmlp(self.spatial_coordinate_grid.flatten(end_dim=-2), sample["t_k"])
+        img = self.fmlp(self.spatial_coordinate_grid.flatten(end_dim=-2), sample["t_k"].type(dtype))
         img = img.reshape(1, self.param.data.Ny, self.param.data.Nx, self.param.fmlp.mlp_out_features)
         return img
     
@@ -246,6 +246,7 @@ class ReconstructionMethod():
         # copy smaps to GPU and setup dataloader
         smaps = dataset.smaps.squeeze(dim=1).type(dtype)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=collocate_concat)
+        dataloader_validation = torch.utils.data.DataLoader(validation_dataset, batch_size=1, shuffle=False, collate_fn=collocate_concat)
 
         img = self.evaluate_npy(dataset[0])
         self.writer.add_image("initial img", img / np.max(img), 0, dataformats="HW")
@@ -260,7 +261,6 @@ class ReconstructionMethod():
         max_ser = float('-inf')
         max_ser_epoch = 0
         max_ser_subset = float('-inf')
-        validation_results = {}
 
         max_ssim = 0.
         max_vif = 0.
@@ -339,10 +339,7 @@ class ReconstructionMethod():
 
             # compute validation metrics
             if validation_dataset is not None and i%self.param.experiment.validation_evaluation_frequency == 0 or i==self.param.hp.num_iter-1 or i == 1:
-                ser, ser_subset, squared_errors_and_signal_power = self.evaluate_validation(dataset, validation_dataset, smaps)
-
-                validation_results[i] = squared_errors_and_signal_power
-                torch.save(validation_results, os.path.join(training_dir, "validation_results.pth"))
+                ser, ser_subset = self.evaluate_validation(dataloader_validation)
 
                 self.writer.add_scalar('performance/validation_ser', ser, i)
                 self.writer.add_scalar('performance/validation_ser_subset', ser_subset, i)
@@ -375,81 +372,60 @@ class ReconstructionMethod():
         print("\n") # clear stdout
     
 
-    def evaluate_validation(self, dataset, validation_dataset, smaps):
-        squared_errors = []
-        squared_signals = []
-        validation_line_indices = []
+    def evaluate_validation(self, dataloader_validation):
+        smaps = dataloader_validation.dataset.smaps.squeeze(dim=1).type(dtype) # copy to GPU
 
-        squared_errors_validation_subset = []
-        squared_signals_validation_subset = []
+        squared_error = torch.tensor(0., dtype=torch.float64)
+        squared_signal = torch.tensor(0., dtype=torch.float64)
+        squared_error_subset = torch.tensor(0., dtype=torch.float64)
+        squared_signal_subset = torch.tensor(0., dtype=torch.float64)
 
-        for v in validation_dataset:
+        for sample in dataloader_validation:
+            sample = copySampleToGPU(sample)
+            with torch.no_grad():
+                img = self.evaluate(sample)
 
-            is_in_sample_indices = v["k"] in self.param.data.sample_indices
-            is_in_subset_indices = v["line_index"] in self.param.experiment.validation_subset_indices
-
-            if is_in_subset_indices and (not is_in_sample_indices):
-                print("error:")
-                print(v)
-                raise Exception
-
-            if not is_in_sample_indices:
-                continue
-
-            v = copySampleToGPU(v)
-            sample = copySampleToGPU(dataset[v["k"]])
-            
-            img = self.evaluate(sample)
-            img = img.detach()
-
-            if "mask" in v.keys(): # cartesian dataset
-                kspace_rec = self.forward_operator.forward_sparse_cartesian(img, smaps, v["mask"])
+            if "mask" in sample.keys(): # cartesian dataset
+                kspace_rec = self.forward_operator.forward_sparse_cartesian(img, smaps, sample["mask"])
             else:
-                kspace_rec = self.forward_operator.forward_non_cartesian(img, smaps, v["trajectory"])
+                kspace_rec = self.forward_operator.forward_non_cartesian(img, smaps, sample["trajectory"])
+                kspace_rec *= self.param.data.nufft_scaling_factor # compensate for scaling due to the NUFFT and the reconstruction via IFFT
 
-            se = torch.sum(torch.square(kspace_rec - v["kspace"])).detach().cpu().numpy()
-            squared_signal = torch.sum(torch.square(v["kspace"])).detach().cpu().numpy()
+            se = torch.sum(torch.square(kspace_rec - sample["kspace"]).flatten(start_dim=1), dim=-1).detach() # squared error
+            ss = torch.sum(torch.square(sample["kspace"]).flatten(start_dim=1), dim=-1).detach() # squared signal
             
-            if is_in_subset_indices:
-                squared_errors_validation_subset.append(se)
-                squared_signals_validation_subset.append(squared_signal)
+            squared_error += torch.sum(se).cpu()
+            squared_signal += torch.sum(ss).cpu()
 
-            squared_errors.append(se)
-            squared_signals.append(squared_signal)
-            validation_line_indices.append(v["line_index"])
+            # check which of the elements in the batch are within the validation subset
+            # sample["line_indices"]: (Ns, 1)
+            is_in_subset = (sample["line_indices"].flatten() <= self.param.experiment.validation_subset_max_line_index)*1.
 
-        mse = np.mean(np.array(squared_errors))
-        mean_power = np.mean(np.array(squared_signals))
-        ser = 10 * np.log10(mean_power / mse)
+            squared_error_subset += torch.sum(is_in_subset * se).cpu()
+            squared_signal_subset += torch.sum(is_in_subset * ss).cpu()
 
-        mean_power_subset = np.mean(np.array(squared_signals_validation_subset))
-        mse_subset = np.mean(np.array(squared_errors_validation_subset))
-        ser_subset = 10 * np.log10(mean_power_subset / mse_subset)
+        ser = 10. * torch.log10(squared_signal / squared_error)
+        ser_subset = 10. * torch.log10(squared_signal_subset / squared_error_subset)
 
-        squared_errors_and_signal_power = {
-            "squared_errors": squared_errors,
-            "squared_signals": squared_signals,
-            "validation_line_indices": validation_line_indices
-        }
-        return ser, ser_subset, squared_errors_and_signal_power
+        return ser, ser_subset
     
 
     def transform(self, sample):
 
-        # compute the time at the center of the frame
-        t_k = float(self.param.data.tr * (sample["line_indices"][0, 0] + sample["line_indices"][0, -1]) / 2)
-        
-        if "mask" in sample.keys():
-            return {
-                "kspace": sample["kspace"],
-                "mask": sample["mask"],
-                "t_k": t_k,
-                "indices": sample["indices"]
-            }
-        else:
-            return {
-                "kspace": sample["kspace"],
-                "trajectory": sample["trajectory"],
-                "t_k": t_k,
-                "indices": sample["indices"]
-            }
+        # compute the measurement time of the measured coordinates assuming that the time is constant within every measured line.
+        _, Nl, Nr, _ = sample["trajectory"].shape
+        t_coordinates = (self.param.data.tr * sample["line_indices"].unsqueeze(dim=-1)).repeat((1, 1, Nr)) # (Ns, Nl, Nr)
+
+        # compute the time at the center of the frames
+        t_k = self.param.data.tr / 2. * (sample["line_indices"][:, 0] + sample["line_indices"][:, -1]).type(torch.float32)
+
+        new_sample = {
+            "kspace": sample["kspace"],
+            "t_k": t_k,
+            "t_coordinates": t_coordinates,
+            "line_indices": sample["line_indices"],
+            "indices": sample["indices"],
+            "mask": sample["mask"]
+        }
+
+        return new_sample

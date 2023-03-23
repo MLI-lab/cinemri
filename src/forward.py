@@ -12,7 +12,7 @@ class ForwardOperator(nn.Module):
         if dataset_type == "non_cartesian":
             self.nufft_ob = tkbn.KbNufft(im_size=(Ny, Nx))
     
-    def forward(self, img, sample, smaps=None):
+    def forward(self, img, sample, smaps=None, norm="ortho"):
         if smaps is None:
             smaps = sample["smaps"]
 
@@ -21,7 +21,7 @@ class ForwardOperator(nn.Module):
         elif self.dataset_type == "sparse_cartesian":
             return self.forward_sparse_cartesian(img, smaps, sample["mask"])
         elif self.dataset_type == "non_cartesian":
-            return self.forward_non_cartesian(img, smaps, sample["trajectory"])
+            return self.forward_non_cartesian(img, smaps, sample["trajectory"], norm=norm)
         else:
             raise Exception
         
@@ -47,6 +47,7 @@ class ForwardOperator(nn.Module):
         kspace_hat = fft2(img_s) # dimensions: (Ns, Nc, Ny, Nx, 2)
         return kspace_hat * mask.unsqueeze(dim=1).unsqueeze(dim=4) # new mask dim: (Ns, 1, Ny, Nx, 1)
     
+      
     def forward_sparse_cartesian(self, img, smaps, mask):
         """
         Single slice:
@@ -77,13 +78,23 @@ class ForwardOperator(nn.Module):
         # shape of mask: (Ns, Nl, Nr, 3)
         mask_flattened = mask.flatten(end_dim=-2)
 
-        # extract masked coordinates from the k-space matrix
+        # shape of mask: (Ns, Nl, Nr, 3)
+        batch_sample_indices = torch.arange(Ns, device=kspace_hat.device).reshape(Ns, 1, 1).repeat(1, Nl, Nr).flatten()
+
+        # indices = torch.concat((mask_flattened, batch_sample_indices), dim=-1)
+
         if img.ndim == 4:
-            return kspace_hat.flatten(end_dim=1)[:, mask_flattened[:,1], mask_flattened[:,2], :].reshape((Ns, Nc, Nl, Nr, 2))
+            return kspace_hat[batch_sample_indices, :, mask_flattened[:,1], mask_flattened[:,2], :].reshape((Ns, Nl, Nr, Nc, 2)).permute((0, 3, 1, 2, 4))
         else:
-            return kspace_hat.flatten(end_dim=1)[:, mask_flattened[:,0], mask_flattened[:,1], mask_flattened[:,2], :].reshape((Ns, Nc, Nl, Nr, 2))
+            return kspace_hat[batch_sample_indices, :, mask_flattened[:,0], mask_flattened[:,1], mask_flattened[:,2], :].reshape((Ns, Nl, Nr, Nc, 2)).permute((0, 3, 1, 2, 4))
+    
+        # extract masked coordinates from the k-space matrix
+        # if img.ndim == 4:
+        #     return kspace_hat.flatten(end_dim=1)[:, mask_flattened[:,1], mask_flattened[:,2], :].reshape((Ns, Nc, Nl, Nr, 2))
+        # else:
+        #     return kspace_hat.flatten(end_dim=1)[:, mask_flattened[:,0], mask_flattened[:,1], mask_flattened[:,2], :].reshape((Ns, Nc, Nl, Nr, 2))
         
-    def forward_non_cartesian(self, img, smaps, trajectory):
+    def forward_non_cartesian(self, img, smaps, trajectory, norm="ortho"):
         """
         Single slice:
         Input tensor dimensions: (Ns: batch size)
@@ -102,7 +113,7 @@ class ForwardOperator(nn.Module):
 
         img_smaps = complex_mul(img.unsqueeze(dim=1), smaps.unsqueeze(dim=0))
         trajectory_flattened = trajectory.flatten(end_dim=-2)[:, 1:3].T # new shape: (2, Nl*Nr)
-        kspace_rec = self.nufft_ob(img_smaps, trajectory_flattened) # (Ns=1, Nc, Nl*Nr, 2) float32
+        kspace_rec = self.nufft_ob(img_smaps, trajectory_flattened, norm=norm) # (Ns=1, Nc, Nl*Nr, 2) float32
 
         return kspace_rec.reshape((1, Nc, Nl, Nr, 2))
 

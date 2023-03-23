@@ -338,6 +338,41 @@ def ifft(input, signal_ndim, normalized=False):
 
     return torch.view_as_real(torch.fft.ifftn(torch.view_as_complex(input), dim=dims, norm=norm))
 
+def fft1(data):
+    """
+    ref: https://github.com/facebookresearch/fastMRI/tree/master/fastmri
+    Apply centered 1 dimensional Fast Fourier Transform. It calls the fft function above to make it compatible with the latest version of pytorch.
+    Args:
+        data (torch.Tensor): Complex valued input data containing at least 2 dimensions: dimensions
+            -2 is the spatial dimension and dimension -1 has size 2. All other dimensions are
+            assumed to be batch dimensions.
+    Returns:
+        torch.Tensor: The FFT of the input.
+    """
+    assert data.size(-1) == 2
+    data = ifftshift(data, dim=(-2))
+    data = fft(data, 1, normalized=True)
+    data = fftshift(data, dim=(-2))
+    return data
+
+
+def ifft1(data):
+    """
+    ref: https://github.com/facebookresearch/fastMRI/tree/master/fastmri
+    Apply centered 1-dimensional Inverse Fast Fourier Transform. It calls the ifft function above to make it compatible with the latest version of pytorch.
+    Args:
+        data (torch.Tensor): Complex valued input data containing at least 2 dimensions: dimensions
+            -2 is the spatial dimension and dimension -1 has size 2. All other dimensions are
+            assumed to be batch dimensions.
+    Returns:
+        torch.Tensor: The IFFT of the input.
+    """
+    assert data.size(-1) == 2
+    data = ifftshift(data, dim=(-2))
+    data = ifft(data, 1, normalized=True)
+    data = fftshift(data, dim=(-2))
+    return data
+
 def fft2(data):
     """
     ref: https://github.com/facebookresearch/fastMRI/tree/master/fastmri

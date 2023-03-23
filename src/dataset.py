@@ -256,7 +256,7 @@ class CartesianDataset():
 
 
     @classmethod
-    def rebin_cartesian_dataset_extract_validationset(self, dataset, listfile_path, number_of_lines_per_frame, validation_percentage, seed=1998, max_Nk=-1, transform=None):
+    def rebin_cartesian_dataset_extract_validationset(self, dataset, listfile_path, number_of_lines_per_frame, validation_percentage, seed=1998, max_Nk=-1, transform=None, validation_transform=None):
         """
         This method extracts a validation dataset from the sampled lines and rebins the remaining lines into frames with `number_of_lines_per_frame`.
 
@@ -297,12 +297,27 @@ class CartesianDataset():
         mask = torch.zeros((Nk, 1, Ny, Nx), dtype=torch.float32)
         line_indices = torch.zeros((Nk, number_of_lines_per_frame), dtype=torch.int64)
 
-        ky_zero_index = int(Ny / 2)
-        validation_set = []
+        # count the number of validation lines within Nk
+        j = 0
+        Nk_validation = 0
+        for k in range(Nk):
+            for l in range(number_of_lines_per_frame):
+                while j in validation_subset:
+                    Nk_validation += 1
+                    j += 1
+                j += 1
 
-        
+        ky_zero_index = int(Ny / 2)
+
+        # SparseCartesianDataset tensors of the validation dataset
+        Nr = torch.nonzero(dataset.mask[dynamics[0], 0, ky_zero_index + ky_indices[0], :])[:, 0].shape[0]
+        kspace_validation = torch.zeros((Nk_validation, Nc, 1, Nr, 2), dtype=torch.float32)
+        mask_validation = torch.zeros((Nk_validation, 1, Nr, 3), dtype=torch.int64)
+        trajectory_validation = torch.zeros((Nk_validation, 1, Nr, 3), dtype=torch.float32)
+        line_indices_validation = torch.zeros((Nk_validation, 1), dtype=torch.int64)
 
         j = 0
+        k_validation = 0
         for k in range(Nk):
             for i in range(number_of_lines_per_frame):
                 while j in validation_subset: # extract the line into the validation set
@@ -310,17 +325,16 @@ class CartesianDataset():
 
                     # convert mask and kspace to sparse representation
                     kx_indices = torch.nonzero(dataset.mask[dynamics[j], 0, ky, :])[:, 0]
-                    Nr = kx_indices.shape[0]
-                    mask_sparse = torch.stack((torch.zeros(Nr), torch.ones(Nr) * ky, kx_indices), axis=1).reshape((1,1,Nr,3)).type(torch.int64)
-                    kspace_sparse = dataset.kspace[dynamics[j], :, 0, ky, kx_indices, :].reshape((1, Nc, 1, Nr, 2))
+                    mask_sparse = torch.stack((torch.zeros(Nr), torch.ones(Nr) * ky, kx_indices), axis=1).reshape((Nr,3)).type(torch.int64)
+                    kspace_sparse = dataset.kspace[dynamics[j], :, 0, ky, kx_indices, :].reshape((Nc, Nr, 2))
+                    trajectory = mask_to_trajectory(mask_sparse, 1, Ny, Nx)
 
-                    validation_set.append({
-                        "line_index": j,
-                        "k": k,
-                        "ky": ky,
-                        "kspace": kspace_sparse,
-                        "mask": mask_sparse
-                    })
+                    kspace_validation[k_validation, :, 0, :, :] = kspace_sparse
+                    trajectory_validation[k_validation, 0, :, :] = trajectory
+                    mask_validation[k_validation, 0, :, :] = mask_sparse
+                    line_indices_validation[k_validation, 0] = j
+
+                    k_validation += 1
                     j += 1
                 
                 ky = ky_zero_index + ky_indices[j] # get ky index in kspace tensor
@@ -333,7 +347,7 @@ class CartesianDataset():
         reference = dataset.reference
 
         np.random.set_state(random_state) # restore the state of the RNG
-        return self(kspace, mask, dataset.smaps, line_indices=line_indices, reference=reference, transform=transform), validation_set
+        return self(kspace, mask, dataset.smaps, line_indices=line_indices, reference=reference, transform=transform), SparseCartesianDataset(kspace_validation, trajectory_validation, mask_validation, line_indices_validation, dataset.smaps, transform=validation_transform)
 
     @classmethod
     def from_cartesian_dataset(self, dataset, transform=None):
@@ -439,7 +453,7 @@ class CartesianSliceDataset(CartesianDataset):
             line_indices = self.line_indices[indices, :]
 
         sample = {
-            'indices': indices,
+            'indices': torch.tensor(indices, dtype=torch.int64),
             'z': z,
             'kspace': kspace,
             'smaps': self.smaps,
@@ -527,6 +541,10 @@ class SparseCartesianDataset():
         - `number_of_lines_per_frame`: Number of k-space lines per frame. Default: 6.
         - `max_Nk`: If not -1, the number of frames is limited.
         - `seed`: seed for the random extraction of k-space lines.
+
+        Outputs: (training_dataset, validation_dataset)
+        - training_dataset: A dataset with `number_of_lines_per_frame` lines per frame.
+        - validation_dataset: A dataset with 1 line per frame.
         """
 
         # save the current state of the RNG and set the new one
@@ -592,11 +610,27 @@ class SparseCartesianDataset():
         if max_Nk != -1:
             Nk = min(Nk, max_Nk)
 
-        # create matrices where the sparse data is filled into
+        # count the number of validation lines within Nk
+        j = 0
+        Nk_validation = 0
+        for k in range(Nk):
+            for l in range(number_of_lines_per_frame):
+                while j in validation_indices:
+                    Nk_validation += 1
+                    j += 1
+                j += 1
+
+
+        # create tenors for the training and the validation dataset
         kspace = np.zeros((Nk, Nc, number_of_lines_per_frame, Nr), dtype=np.csingle)
         mask = np.zeros((Nk, number_of_lines_per_frame, Nr, 3), dtype=np.int64)
         trajectory = np.zeros((Nk, number_of_lines_per_frame, Nr, 3), dtype=np.float32)
         line_indices = np.zeros((Nk, number_of_lines_per_frame), dtype=np.int64)
+
+        kspace_validation = np.zeros((Nk_validation, Nc, 1, Nr), dtype=np.csingle)
+        mask_validation = np.zeros((Nk_validation, 1, Nr, 3), dtype=np.int64)
+        trajectory_validation = np.zeros((Nk_validation, 1, Nr, 3), dtype=np.float32)
+        line_indices_validation = np.zeros((Nk_validation, 1), dtype=np.int64)
 
         # find the zero index of the k-space matrix in ky-direction
         ky_zero_index = int(Ny / 2)
@@ -605,9 +639,7 @@ class SparseCartesianDataset():
 
         # stacks the measurements from different coils
         def line_generator():
-
             for l in range(Nl):
-
                 line_kspace = np.zeros((Nc, Nr), dtype=np.csingle)
                 for c in range(Nc):
                     i = l*Nc+c
@@ -633,18 +665,18 @@ class SparseCartesianDataset():
 
         lines = line_generator()
         j = 0
-        validation_dataset = []
+        k_validation = 0
         for k in range(Nk):
             for l in range(number_of_lines_per_frame):
                 while j in validation_indices: # put lines in the validation dataset
                     line_kspace, line_trajectory, line_mask = next(lines)
-                    validation_dataset.append({
-                        "line_index": j,
-                        "k": k,
-                        "kspace": to_tensor(line_kspace).reshape((1, Nc, 1, Nr, 2)),
-                        "trajectory": to_tensor(line_trajectory).reshape((1, 1, Nr, 3)),
-                        "mask": to_tensor(line_mask).reshape((1, 1, Nr, 3)).type(torch.long)
-                    })
+
+                    kspace_validation[k_validation, :, 0, :] = line_kspace
+                    trajectory_validation[k_validation, 0, :, :] = line_trajectory
+                    mask_validation[k_validation, 0, :, :] = line_mask
+                    line_indices_validation[k_validation, 0] = j
+
+                    k_validation += 1
                     j += 1
                 
                 # put the line in the training dataset
@@ -659,9 +691,16 @@ class SparseCartesianDataset():
         
         # insert dimensions for the z-axis (that is not used since this method handles 2D datasets with a single slice)
         smaps = smaps.unsqueeze(dim=1)
+
+        line_indices = to_tensor(line_indices)
         kspace = to_tensor(kspace)
         trajectory = to_tensor(trajectory)
         mask = to_tensor(mask)
+
+        line_indices_validation = to_tensor(line_indices_validation)
+        kspace_validation = to_tensor(kspace_validation)
+        trajectory_validation = to_tensor(trajectory_validation)
+        mask_validation = to_tensor(mask_validation)
         
         
         # if reference data is available, the reference matrix has at least 3 dimensions
@@ -672,7 +711,7 @@ class SparseCartesianDataset():
         # restore the state of the RNG
         np.random.set_state(random_state)
 
-        return self(kspace, trajectory, mask, line_indices, smaps, reference=reference, transform=transform), validation_dataset
+        return self(kspace, trajectory, mask, line_indices, smaps, reference=reference, transform=transform), self(kspace_validation, trajectory_validation, mask_validation, line_indices_validation, smaps, transform=transform)
     
     @classmethod
     def from_sparse_cartesian_dataset(self, dataset, transform=None):
@@ -713,7 +752,7 @@ class SparseCartesianDataset():
                 reference[n, 0, :, :] = self.reference[index, :, :, :]
 
         sample = {
-            'indices': indices,
+            'indices': torch.tensor(indices, dtype=torch.int64),
             'kspace': self.kspace[indices, :, :, :, :],
             'trajectory': self.trajectory[indices, :, :, :],
             'mask': self.mask[indices, :, :, :],
@@ -840,7 +879,13 @@ class NonCartesianDataset3D():
         self.Nk, self.Nc, self.Nz, self.Ny, self.Nx = shape
     
     @classmethod
-    def from_mat_file_binned_validation(self, matfile_path, listfile_path, number_of_lines_per_frame, validation_percentage, transform=None, load_in_chunks=False, seed=1998, convert_to_rad=True, has_norm_fac=False, transpose_smaps=True, max_Nk=-1):
+    def from_mat_file_binned_validation(self, matfile_path, listfile_path, number_of_lines_per_frame, validation_percentage, transform=None, load_in_chunks=False, seed=1998, convert_to_rad=True, has_norm_fac=False, transpose_smaps=False, max_Nk=-1):
+        """
+        Loads a non-cartesian dataset from a Matlab file, extracts a validation dataset, and bins the remaining lines into frames.
+
+        If the following error occurs, `has_norm_fac` needs to be set to True:
+            max() arg is an empty sequence
+        """
         random_state = np.random.get_state() # only change the seed locally -> restore later
         np.random.seed(seed)
         with h5py.File(matfile_path, 'r', rdcc_nbytes=1024**3, rdcc_w0=1, rdcc_nslots=1024) as f:
@@ -879,27 +924,40 @@ class NonCartesianDataset3D():
         if max_Nk > 0:
             Nk = min(Nk, max_Nk)
 
+        # count the number of validation lines within Nk
+        j = 0
+        Nk_validation = 0
+        for k in range(Nk):
+            for l in range(number_of_lines_per_frame):
+                while j in validation_subset:
+                    Nk_validation += 1
+                    j += 1
+                j += 1
+        
+
         kspace_binned = torch.empty((Nk, Nc, number_of_lines_per_frame, readout_len, 2), dtype=torch.float32)
         trajectory_binned = torch.empty((Nk, number_of_lines_per_frame, readout_len, 3), dtype=torch.float32)
         weights_binned = torch.empty((Nk, number_of_lines_per_frame, readout_len), dtype=torch.float32)
         line_indices = torch.empty((Nk, number_of_lines_per_frame), dtype=torch.int64)
 
-        validation_set = []
+        kspace_validation = torch.empty((Nk_validation, Nc, 1, readout_len, 2), dtype=torch.float32)
+        trajectory_validation = torch.empty((Nk_validation, 1, readout_len, 3), dtype=torch.float32)
+        weights_validation = torch.empty((Nk_validation, 1, readout_len), dtype=torch.float32)
+        line_indices_validation = torch.empty((Nk_validation, 1), dtype=torch.int64)
 
         j = 0
+        k_validation = 0
         for k in range(Nk):
             for i in range(number_of_lines_per_frame):
                 while j in validation_subset:
                     ky = ky_indices[j]
             
-                    validation_set.append({
-                        "line_index": j,
-                        "k": k,
-                        "ky": ky,
-                        "kspace": to_tensor(kspace[dynamics[j], :, ky, :]).reshape((1, Nc, 1, readout_len, 2)),
-                        "trajectory": trajectory[:, ky, :].T.reshape((1, 1, readout_len, 3)),
-                        "weights": weights[ky, :].unsqueeze(dim=0),
-                    })
+                    kspace_validation[k_validation, :, 0, :] = to_tensor(kspace[dynamics[j], :, ky, :])
+                    trajectory_validation[k_validation, 0, :, :] = trajectory[:, ky, :].T
+                    weights_validation[k_validation, 0, :] = weights[ky, :]
+                    line_indices_validation[k_validation, 0] = j
+
+                    k_validation += 1
                     j += 1
                 
                 ky = ky_indices[j]
@@ -921,12 +979,13 @@ class NonCartesianDataset3D():
 
         Nc, Nz, Ny, Nx, _ = smaps.shape      
         shape = (Nk, int(Nc), int(Nz), int(Ny), int(Nx))
+        shape_validation = (Nk_validation, int(Nc), int(Nz), int(Ny), int(Nx))
 
         if not (Ny == Ny_traj and Nx == Nx_traj):
             print("Warning: trajectory output matrix size does not match the dimensions of the sensitivity maps.")
 
         np.random.set_state(random_state)
-        return self(kspace_binned, trajectory_binned, shape, smaps=smaps, weights=weights_binned, transform=transform, line_indices=line_indices, reference=None), validation_set
+        return self(kspace_binned, trajectory_binned, shape, smaps=smaps, weights=weights_binned, transform=transform, line_indices=line_indices, reference=None), self(kspace_validation, trajectory_validation, shape_validation, smaps=smaps, weights=weights_validation, transform=transform, line_indices=line_indices_validation, reference=None)
     
     def __len__(self):
         """
@@ -957,7 +1016,7 @@ class NonCartesianDataset3D():
             line_indices = self.line_indices[indices]
 
         sample = {
-            "indices": indices,
+            "indices": torch.tensor(indices, dtype=torch.int64),
             "kspace": self.kspace[indices],
             "smaps": self.smaps,
             "trajectory": self.trajectory[indices],
@@ -974,7 +1033,7 @@ class NonCartesianDataset3D():
 
     def shape(self):
         """
-        Returns (Nk, Nc, Ny, Nx).
+        Returns (Nk, Nc, Nz, Ny, Nx).
         """
         return (self.Nk, self.Nc, self.Nz, self.Ny, self.Nx)
 
@@ -1624,3 +1683,11 @@ class ExamCard():
     @staticmethod
     def count_leading_whitespaces(text):
         return len(text) - len(text.lstrip())
+
+
+def mask_to_trajectory(mask, Nz, Ny, Nx):
+    trajectory = mask.clone().type(dtype)
+    trajectory[..., 0] = 2. * torch.pi / Nz * (-int(Nz/2) + trajectory[..., 0])
+    trajectory[..., 1] = 2. * torch.pi / Ny * (-int(Ny/2) + trajectory[..., 1]) 
+    trajectory[..., 2] = 2. * torch.pi / Nx * (-int(Nx/2) + trajectory[..., 2]) 
+    return trajectory
