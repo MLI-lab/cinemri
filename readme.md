@@ -20,6 +20,6 @@
 4 seconds:
 ![FMLP reconstruction of the low-resolution high-SNR dataset with 4s acquisition length](supplements/lowres_highsnr/FMLP/225/timecoded_cfr.gif)
 8 seconds:
-![FMLP reconstruction of the low-resolution high-SNR dataset with 8s acquisition length](supplements/lowres_highsnr/FMLP/450/timecoded_vfr.gif)
+![FMLP reconstruction of the low-resolution high-SNR dataset with 8s acquisition length](supplements/lowres_highsnr/FMLP/450/timecoded_cfr.gif)
 16 seconds:
-![FMLP reconstruction of the low-resolution high-SNR dataset with 16s acquisition length](supplements/lowres_highsnr/FMLP/900/timecoded_vfr.gif)
+![FMLP reconstruction of the low-resolution high-SNR dataset with 16s acquisition length](supplements/lowres_highsnr/FMLP/900/timecoded_cfr.gif)
