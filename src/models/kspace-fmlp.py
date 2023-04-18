@@ -283,6 +283,9 @@ class ReconstructionMethod():
 
         self.weighted_smaps = None
 
+        if param.experiment.evaluate_reference_metrics:
+            self.metrics = PerformanceMetrics(**vars(param.metrics))
+
 
     def get_kspace_coordinate_grid(self):
         """

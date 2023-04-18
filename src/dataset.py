@@ -20,7 +20,7 @@ class CartesianDataset():
         if smaps is not None: assert smaps.ndim == 5
         if reference is not None: assert reference.ndim == 4
 
-        self.kspace = kspace # shape (Nk, Nc, Nz, Ny, Nx, 2) torch.tensor complex
+        self.kspace = kspace # shape (Nk, Nc, Nz, Ny, Nx, 2) torch.tensor float32
         self.mask = mask # shape (Nk, Nz, Ny, Nx) torch.tensor float32
         self.smaps = smaps # shape (Nc, Nz, Ny, Nx, 2) torch.tensor float32
         self.reference = reference # shape (Nk, Nz, Ny, Nx) torch.tensor complex
@@ -562,6 +562,7 @@ class SparseCartesianDataset():
             raw_kspace = h5py2Complex(f["kspace"], load_in_chunks=False)
             reference = np.array(f["reference"])
             encoding_pars = parse_struct(f["encoding_pars"])
+            self.encoding_pars = encoding_pars
 
         # if required, set the zero pixels of the smaps (outside the body) to 1.0
         if set_smaps_outside_to_one:
@@ -710,9 +711,119 @@ class SparseCartesianDataset():
 
         # restore the state of the RNG
         np.random.set_state(random_state)
-
         return self(kspace, trajectory, mask, line_indices, smaps, reference=reference, transform=transform), self(kspace_validation, trajectory_validation, mask_validation, line_indices_validation, smaps, transform=transform)
     
+    @classmethod
+    def from_cartesian_dataset_extract_validation_dataset_rebin(self, cartesian_dataset, listfile_path,
+                                                         transform=None,
+                                                         validation_percentage=0.,
+                                                         number_of_lines_per_frame=6,
+                                                         max_Nk=-1,
+                                                         seed=1998):
+        # save the current state of the RNG and set the new one
+        random_state = np.random.get_state() 
+        np.random.seed(seed) 
+
+        list_data = ListData(file_name=listfile_path)
+
+        # get a lists that contains the following information for every ky-line in the matrix `kspace`: index of the dynamic, index of the coil, ky indices (shifted)
+        dynamics, ky_indices = list_data.get_dynamics_and_kyindices()
+        Nl = len(ky_indices)
+        Nr = cartesian_dataset.Nx # sample the entire ky line (!! cartesian dataset must not have padding)
+        
+        Nc, Ny, Nx = cartesian_dataset.Nc, cartesian_dataset.Ny, cartesian_dataset.Nx
+
+        # generate a random subset of measured lines:
+        validation_indices = np.arange(stop=Nl)
+        np.random.shuffle(validation_indices)
+        validation_indices = validation_indices[0:int(Nl * validation_percentage / 100)]
+
+        Nk = (Nl - len(validation_indices)) // number_of_lines_per_frame
+        if max_Nk != -1:
+            Nk = min(Nk, max_Nk)
+
+        # count the number of validation lines within Nk
+        j = 0
+        Nk_validation = 0
+        for k in range(Nk):
+            for l in range(number_of_lines_per_frame):
+                while j in validation_indices:
+                    Nk_validation += 1
+                    j += 1
+                j += 1
+
+        # create tenors for the training and the validation dataset
+        kspace = torch.zeros((Nk, Nc, number_of_lines_per_frame, Nr, 2), dtype=torch.float32)
+        mask = torch.zeros((Nk, number_of_lines_per_frame, Nr, 3), dtype=torch.int64)
+        trajectory = torch.zeros((Nk, number_of_lines_per_frame, Nr, 3), dtype=torch.float32)
+        line_indices = torch.zeros((Nk, number_of_lines_per_frame), dtype=torch.int64)
+
+        kspace_validation = torch.zeros((Nk_validation, Nc, 1, Nr, 2), dtype=torch.float32)
+        mask_validation = torch.zeros((Nk_validation, 1, Nr, 3), dtype=torch.int64)
+        trajectory_validation = torch.zeros((Nk_validation, 1, Nr, 3), dtype=torch.float32)
+        line_indices_validation = torch.zeros((Nk_validation, 1), dtype=torch.int64)
+
+        # find the zero index of the k-space matrix in ky-direction
+        ky_zero_index = int(Ny / 2)
+        # find the first kx index that should be filled with data
+        kx_shift = 0
+
+        # stacks the measurements from different coils
+        def line_generator():
+            for i, (k, ky) in enumerate(zip(dynamics, ky_indices)):
+                
+                ky_index = ky_zero_index + ky
+                ky_coordinate = 2. * torch.pi * ky / Ny
+
+                line_kspace = cartesian_dataset.kspace[k, :, 0, ky_index, :, :]
+
+                kx_indices = kx_shift + torch.arange(Nr)
+                kx_coordinates = 2. * torch.pi * (-int(Nr/2) + torch.arange(Nr)) / Nx
+
+                line_mask = torch.stack((torch.zeros(Nr), torch.ones(Nr)*ky_index, kx_indices), axis=-1)
+                line_trajectory = torch.stack((torch.zeros(Nr), torch.ones(Nr)*ky_coordinate, kx_coordinates), axis=-1)
+
+                yield line_kspace, line_trajectory, line_mask
+
+
+        lines = line_generator()
+
+        j = 0
+        k_validation = 0
+        for k in range(Nk):
+            for l in range(number_of_lines_per_frame):
+                while j in validation_indices: # put lines in the validation dataset
+                    line_kspace, line_trajectory, line_mask = next(lines)
+
+                    kspace_validation[k_validation, :, 0, :, :] = line_kspace
+                    trajectory_validation[k_validation, 0, :, :] = line_trajectory
+                    mask_validation[k_validation, 0, :, :] = line_mask
+                    line_indices_validation[k_validation, 0] = j
+
+                    k_validation += 1
+                    j += 1
+                
+                # put the line in the training dataset
+                line_kspace, line_trajectory, line_mask = next(lines)
+                kspace[k, :, l, :, :] = line_kspace
+                trajectory[k, l, :, :] = line_trajectory
+                mask[k, l, :, :] = line_mask
+                line_indices[k, l] = j
+
+                j += 1
+
+        reference = cartesian_dataset.reference
+        if cartesian_dataset.reference is not None and cartesian_dataset.reference.shape[0] == Nl:
+            # phantom dataset -> extract a reference images for each frame
+            frame_indices = torch.round(0.5*(line_indices[:,0] + line_indices[:,-1])).type(torch.long)
+            reference = cartesian_dataset.reference[frame_indices, ...]
+
+        # restore the state of the RNG
+        np.random.set_state(random_state)
+        return self(kspace, trajectory, mask, line_indices, cartesian_dataset.smaps, reference=reference, transform=transform), self(kspace_validation, trajectory_validation, mask_validation, line_indices_validation, cartesian_dataset.smaps, transform=transform)
+    
+
+        
     @classmethod
     def from_sparse_cartesian_dataset(self, dataset, transform=None):
         """
@@ -747,7 +858,7 @@ class SparseCartesianDataset():
 
         reference = None
         if not self.reference is None:
-            reference = torch.zeros((len(indices), 1, self.Ny, self.Nx), dtype=np.csingle)
+            reference = torch.zeros((len(indices), 1, self.Ny, self.Nx), dtype=torch.complex64)
             for n, index in enumerate(indices):
                 reference[n, 0, :, :] = self.reference[index, :, :, :]
 

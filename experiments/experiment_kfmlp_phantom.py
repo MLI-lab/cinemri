@@ -16,42 +16,13 @@ def load_dataset(param, model=None):
     if model is not None:
         transform = model.transform
 
-    if param.data.dataset_type == "cartesian":
-        dataset_orig = CartesianDataset.from_sparse_matfile2d(param.data.dataset_info["matfile_path"],
-                                                              param.data.dataset_info["listfile_path"],
-                                                              shift=param.data.shift,
-                                                              remove_padding=param.data.remove_padding,
-                                                              set_smaps_outside_to_one=param.data.set_smaps_outside_to_one)
-        dataset, validation_dataset = CartesianSliceDataset.rebin_cartesian_dataset_extract_validationset(dataset_orig,
-                                                                                                          param.data.dataset_info["listfile_path"],
-                                                                                                          validation_percentage=param.data.validation_percentage,
-                                                                                                          number_of_lines_per_frame=param.data.number_of_lines_per_frame,
-                                                                                                          max_Nk=param.data.Nk,
-                                                                                                          transform=transform
-                                                                                                          )
-    elif param.data.dataset_type == "sparse_cartesian":
-        dataset, validation_dataset = SparseCartesianDataset.from_sparse_matfile2d_extract_validation_dataset_rebin(param.data.dataset_info["matfile_path"],
-                                                                                                                    param.data.dataset_info["listfile_path"],
-                                                                                                                    remove_padding=param.data.remove_padding,
-                                                                                                                    shift=param.data.shift,
-                                                                                                                    set_smaps_outside_to_one=param.data.set_smaps_outside_to_one,
-                                                                                                                    validation_percentage=param.data.validation_percentage,
-                                                                                                                    number_of_lines_per_frame=param.data.number_of_lines_per_frame,
-                                                                                                                    max_Nk=param.data.Nk,
-                                                                                                                    transform=transform)
-    elif param.data.dataset_type == "non_cartesian": # non-cartesian
-        dataset, validation_dataset = NonCartesianDataset3D.from_mat_file_binned_validation(param.data.dataset_info["matfile_path"],
-                                                                                            param.data.dataset_info["listfile_path"],
-                                                                                            param.data.number_of_lines_per_frame,
-                                                                                            param.data.validation_percentage,
-                                                                                            convert_to_rad=True,
-                                                                                            has_norm_fac=True,
-                                                                                            transpose_smaps=False,
-                                                                                            max_Nk=param.data.Nk,
-                                                                                            transform=transform)
-    else:
-        raise Exception
-    
+    cartesian_dataset = CartesianDataset.from_npyfiles(param.data.base_path_and_name)
+    dataset, validation_dataset = SparseCartesianDataset.from_cartesian_dataset_extract_validation_dataset_rebin(cartesian_dataset,
+                                                                                                                 param.data.listfile_path,
+                                                                                                                 validation_percentage=param.data.validation_percentage,
+                                                                                                                 number_of_lines_per_frame=param.data.number_of_lines_per_frame,
+                                                                                                                 max_Nk=param.data.Nk,
+                                                                                                                 transform=transform)
     return dataset, validation_dataset
 
 ## main function that executes an experiment
@@ -123,22 +94,20 @@ if __name__ == '__main__':
 
     print("Selected GPU", gpu)
 
-    for Nk in [900, 450]:
+    for u in [1]:
+        for i in [2]:
 
-            # Nk = 225
-            sigma = 1e1
+            Nk = 225
+            sigma = 0. # 1e1
             out_scale = 1000.
             st = 1.0
-            sx = 1.5e1
-            lambda_denoiser = 0.1
-            epsilon = 1e4
+            sx = 1e1
+            lambda_denoiser = 0. # 0.1
+            epsilon = 0. # 1e4
 
             np.random.seed(1998)
             random.seed(1998)
             torch.manual_seed(1998)
-
-            cava_v1_measurement_number = 10
-            dataset_info = datasets_cava_v1[cava_v1_measurement_number]
 
             param = SimpleNamespace()
             param.experiment = SimpleNamespace()
@@ -149,21 +118,17 @@ if __name__ == '__main__':
             param.metrics = SimpleNamespace()
 
             ## Dataset Configuration
-            param.data.dataset_info = dataset_info
-            param.data.remove_padding = True
-            param.data.shift = True
-            param.data.set_smaps_outside_to_one = True
-            param.data.dataset_type = "sparse_cartesian" if dataset_info["cartesian"] else "non_cartesian"
+            param.data.listfile_path = "data/xcat/phantom3/low_res_as_cava_v1_10.list"
+            param.data.base_path_and_name = "data/xcat/phantom3/low_res_as_cava_v1_10"
+            param.data.dataset_type = "sparse_cartesian"
             param.data.number_of_lines_per_frame = 6
             param.data.validation_percentage = 5
             param.data.Nk = Nk
             param.data.sample_indices = list(range(param.data.Nk))
-            param.data.max_intensity_value = dataset_info["brightness"] # use the brighness value that is stored in the dataset_info (this value was set arbitrarily to obtain images with reasonable contrast)
+            param.data.max_intensity_value = 12. # use the brighness value that is stored in the dataset_info (this value was set arbitrarily to obtain images with reasonable contrast)
             param.data.smaps_zero_threshold = 1e-5
-            param.data.nufft_scaling_factor = 8. # needs to be calculated properly!! 8 is a good guess
 
-            examcard = ExamCard(dataset_info["examcard_path"])
-            param.data.tr = examcard.parameters["Act. TR/TE (ms)"][0] * 1e-3
+            param.data.tr = 2.8e-3
             param.data.frame_rate = 1 / (param.data.tr * param.data.number_of_lines_per_frame) # approximately if validation_percentage is low
 
             dataset, validation_dataset = load_dataset(param)
@@ -175,14 +140,7 @@ if __name__ == '__main__':
 
             param.data.frame_times = param.data.tr * (dataset.line_indices[:, 0] + dataset.line_indices[:, -1]) / 2 # t_k
 
-            # load Physlog and extract cardiac phase and respiratory state
-            physlog = PhysLogData(dataset_info["physlog_path"])
-            phys_info = physlog.single_marker_cardiac_and_respiratoy_info(sample_times=param.data.frame_times)
-            param.data.cardiac_phases = phys_info["cardiac_phases"]
-            param.data.cardiac_cycles = phys_info["cardiac_cycles"]
-
-
-            # FMLP parameters
+            # KFMLP parameters
             param.fmlp.spatial_feature_map = "fourier_features"
             param.fmlp.resolution = [param.data.Ny, param.data.Nx]
 
@@ -217,15 +175,15 @@ if __name__ == '__main__':
             param.hp.epsilon = epsilon
             param.hp.sigma = sigma
             param.hp.lambda_denoising_loss = lambda_denoiser
-            param.hp.loss_type = "high_dynamic_range"
+            param.hp.loss_type = "l_2"
             param.hp.batch_size_training = 1
             param.hp.batch_size_validation = 1
 
-            text_description = "s_t {} sx {} out_scale {} eps {} sigma {} lambda {}".format(st, param.fmlp.spatial_coordinate_scales[0], param.fmlp.out_scale, param.hp.epsilon, param.hp.sigma, param.hp.lambda_denoising_loss)
+            text_description = "s_t {} sx {} out_scale {} eps {} sigma {} lambda {} reference".format(st, param.fmlp.spatial_coordinate_scales[0], param.fmlp.out_scale, param.hp.epsilon, param.hp.sigma, param.hp.lambda_denoising_loss)
             
             ## Experiment configuration
             param_series = SimpleNamespace()
-            param_series.series_dir = "results/cava_v1/{}/KFMLP/validation/{}/hdr/".format(cava_v1_measurement_number, param.data.Nk)
+            param_series.series_dir = "results/phantom3/KFMLP/validation/{}/l_2/".format(param.data.Nk)
             create_dir(param_series.series_dir)
 
             # copy all additional files to the series directory (so they are not changed during execution)
@@ -243,6 +201,18 @@ if __name__ == '__main__':
             param.experiment.model_save_frequency = 100
             param.experiment.video_evaluation_frequency = 100
             param.experiment.validation_evaluation_frequency = 1
+            param.experiment.evaluate_reference_metrics = True
+            param.experiment.reference_evaluation_frequency = 1
+
+            param.metrics.img_scaling = 1.
+            param.metrics.ssim=True
+            param.metrics.psnr=False
+            param.metrics.ser=False
+            param.metrics.hfen=False
+            param.metrics.brisque=False
+            param.metrics.vif=True
+            param.metrics.mse=True
+            param.metrics.crossection_vif=False
 
             param.experiment.validation_subset_max_line_index = torch.max(dataset[224]["line_indices"])
 

@@ -122,8 +122,12 @@ if __name__ == '__main__':
 
     print("Selected GPU", gpu)
 
-    for dataset_nr, st, sx, layer_width, num_layers in zip([15, 20], [2., 1.], [30., 60., ], [256, 512], [5, 7]):
-
+    for asd in [1]:
+        dataset_nr = 15
+        st = 1.
+        sx = 30.
+        layer_width = 512
+        num_layers = 7
         Nk = 225
 
         np.random.seed(1998)
