@@ -16,8 +16,9 @@
 #### Low-resolution high-SNR dataset
 
 *Reconstructions using different acquisition lengths*
+
 4 seconds:
-![FMLP reconstruction of the low-resolution high-SNR dataset with 4s acquisition length](supplements/lowres_highsnr/FMLP/225/timecoded_vfr.mp4)
+![FMLP reconstruction of the low-resolution high-SNR dataset with 4s acquisition length](supplements/lowres_highsnr/FMLP/225/timecoded_cfr.mp4)
 8 seconds:
 ![FMLP reconstruction of the low-resolution high-SNR dataset with 8s acquisition length](supplements/lowres_highsnr/FMLP/450/timecoded_vfr.mp4)
 16 seconds:

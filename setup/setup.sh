@@ -42,8 +42,9 @@ pip install pyrtools
 cd /workspace
 git clone https://github.com/nu774/mp4fpsmod.git
 cd mp4fpsmod
-apt install autoconf
-apt install libtool
+apt install --yes autoconf
+apt install --yes libtool
+./bootstrap.sh
 ./configure
 make
 make install
