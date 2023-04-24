@@ -37,6 +37,6 @@ The low-resoltion low-SNR dataset was reconstructed by the FMLP, the KFMLP, and 
 ![Reconstructions of the low-resolution low-SNR dataset with the FMLP, KFMLP, and t-DIP.](supplements/lowres_lowsnr/all_methods_225/timecoded_cfr.gif)
 
 #### High-resolution dataset
-The reconstructions of high-resolution dataset are depricted below. Again, the FMLP and the t-DIP are similar in quality. The KFMLP's reconstruction is obscured substantially by noise.
+The reconstructions of high-resolution dataset for an acquisition time of $4s$ ($T=225$) are depricted below. Again, the FMLP and the t-DIP are similar in image quality. The KFMLP's reconstruction is obscured substantially by noise.
 
 ![Reconstructions of the high-resolution dataset with the FMLP, KFMLP, and t-DIP.](supplements/highres/all_methods_225/timecoded_cfr.gif)
