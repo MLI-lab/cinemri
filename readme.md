@@ -6,9 +6,8 @@
 1. Setup a docker container with support for Nvidia GPUs and pytorch. 
 2. Install additional packages
 ```bash
-cd ./setup
-chmod +x setup.sh
-./setup.sh
+chmod +x ./setup/setup.sh
+./setup/setup.sh
 ```
 
 ## Datasets
