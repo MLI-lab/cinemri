@@ -94,132 +94,130 @@ if __name__ == '__main__':
 
     print("Selected GPU", gpu)
 
-    for u in [1]:
-        for i in [2]:
 
-            Nk = 225
-            sigma = 0. # 1e1
-            out_scale = 1000.
-            st = 1.0
-            sx = 1e1
-            lambda_denoiser = 0. # 0.1
-            epsilon = 0. # 1e4
+    Nk = 225
+    sigma = 0. # 1e1
+    out_scale = 1000.
+    st = 1.0
+    sx = 1e1
+    lambda_denoiser = 0. # 0.1
+    epsilon = 0. # 1e4
 
-            np.random.seed(1998)
-            random.seed(1998)
-            torch.manual_seed(1998)
+    np.random.seed(1998)
+    random.seed(1998)
+    torch.manual_seed(1998)
 
-            param = SimpleNamespace()
-            param.experiment = SimpleNamespace()
-            param.data  = SimpleNamespace()
-            param.hp = SimpleNamespace()
-            param.fmlp = SimpleNamespace()
-            param.optimizer = SimpleNamespace()
-            param.metrics = SimpleNamespace()
+    param = SimpleNamespace()
+    param.experiment = SimpleNamespace()
+    param.data  = SimpleNamespace()
+    param.hp = SimpleNamespace()
+    param.fmlp = SimpleNamespace()
+    param.optimizer = SimpleNamespace()
+    param.metrics = SimpleNamespace()
 
-            ## Dataset Configuration
-            param.data.listfile_path = "data/xcat/phantom3/low_res_as_cava_v1_10.list"
-            param.data.base_path_and_name = "data/xcat/phantom3/low_res_as_cava_v1_10"
-            param.data.dataset_type = "sparse_cartesian"
-            param.data.number_of_lines_per_frame = 6
-            param.data.validation_percentage = 5
-            param.data.Nk = Nk
-            param.data.sample_indices = list(range(param.data.Nk))
-            param.data.max_intensity_value = 12. # use the brighness value that is stored in the dataset_info (this value was set arbitrarily to obtain images with reasonable contrast)
-            param.data.smaps_zero_threshold = 1e-5
+    ## Dataset Configuration
+    param.data.listfile_path = "data/xcat/phantom3/low_res_as_cava_v1_10.list"
+    param.data.base_path_and_name = "data/xcat/phantom3/low_res_as_cava_v1_10"
+    param.data.dataset_type = "sparse_cartesian"
+    param.data.number_of_lines_per_frame = 6
+    param.data.validation_percentage = 5
+    param.data.Nk = Nk
+    param.data.sample_indices = list(range(param.data.Nk))
+    param.data.max_intensity_value = 12. # use the brighness value that is stored in the dataset_info (this value was set arbitrarily to obtain images with reasonable contrast)
+    param.data.smaps_zero_threshold = 1e-5
 
-            param.data.tr = 2.8e-3
-            param.data.frame_rate = 1 / (param.data.tr * param.data.number_of_lines_per_frame) # approximately if validation_percentage is low
+    param.data.tr = 2.8e-3
+    param.data.frame_rate = 1 / (param.data.tr * param.data.number_of_lines_per_frame) # approximately if validation_percentage is low
 
-            dataset, validation_dataset = load_dataset(param)
-            dataset = dataset.subset(param.data.sample_indices)
-            (Nk, Nc, _, Ny, Nx) = dataset.shape()
-            param.data.Nx = Nx
-            param.data.Ny = Ny
-            param.data.Nc = Nc
+    dataset, validation_dataset = load_dataset(param)
+    dataset = dataset.subset(param.data.sample_indices)
+    (Nk, Nc, _, Ny, Nx) = dataset.shape()
+    param.data.Nx = Nx
+    param.data.Ny = Ny
+    param.data.Nc = Nc
 
-            param.data.frame_times = param.data.tr * (dataset.line_indices[:, 0] + dataset.line_indices[:, -1]) / 2 # t_k
+    param.data.frame_times = param.data.tr * (dataset.line_indices[:, 0] + dataset.line_indices[:, -1]) / 2 # t_k
 
-            # KFMLP parameters
-            param.fmlp.spatial_feature_map = "fourier_features"
-            param.fmlp.resolution = [param.data.Ny, param.data.Nx]
+    # KFMLP parameters
+    param.fmlp.spatial_feature_map = "fourier_features"
+    param.fmlp.resolution = [param.data.Ny, param.data.Nx]
 
-            param.fmlp.spatial_in_features = 2
-            param.fmlp.spatial_fmap_width = 512
-            param.fmlp.spatial_coordinate_scales = [sx, sx] # spatial coordinate scale
-            
-            param.fmlp.temporal_in_features = 1
-            param.fmlp.temporal_fmap_width = 128
-            param.fmlp.temporal_coordinate_scales = [st] # temporal coordinate scale in [1/s]
+    param.fmlp.spatial_in_features = 2
+    param.fmlp.spatial_fmap_width = 512
+    param.fmlp.spatial_coordinate_scales = [sx, sx] # spatial coordinate scale
+    
+    param.fmlp.temporal_in_features = 1
+    param.fmlp.temporal_fmap_width = 128
+    param.fmlp.temporal_coordinate_scales = [st] # temporal coordinate scale in [1/s]
 
-            param.fmlp.mlp_width = 512
-            param.fmlp.mlp_sigma = 0.01
-            param.fmlp.mlp_scale = 1.
-            param.fmlp.mlp_hidden_layers = 7
-            param.fmlp.mlp_hidden_bias = True
+    param.fmlp.mlp_width = 512
+    param.fmlp.mlp_sigma = 0.01
+    param.fmlp.mlp_scale = 1.
+    param.fmlp.mlp_hidden_layers = 7
+    param.fmlp.mlp_hidden_bias = True
 
-            param.fmlp.mlp_out_features = 2 * Nc
-            param.fmlp.mlp_final_sigma = 0.01
-            param.fmlp.mlp_final_bias = True
+    param.fmlp.mlp_out_features = 2 * Nc
+    param.fmlp.mlp_final_sigma = 0.01
+    param.fmlp.mlp_final_bias = True
 
-            param.fmlp.out_scale = out_scale
-            
-            ## optimizer parameters
-            param.optimizer.weight_decay = 0
-            param.optimizer.lr = 2e-4
+    param.fmlp.out_scale = out_scale
+    
+    ## optimizer parameters
+    param.optimizer.weight_decay = 0
+    param.optimizer.lr = 2e-4
 
-            ## other hyperparameters
-            param.hp.num_iter = 100
-            param.hp.extend_training_until_no_new_ser_highscore = True
-            param.hp.num_epochs_after_last_highscore = 200
-            param.hp.epsilon = epsilon
-            param.hp.sigma = sigma
-            param.hp.lambda_denoising_loss = lambda_denoiser
-            param.hp.loss_type = "l_2"
-            param.hp.batch_size_training = 1
-            param.hp.batch_size_validation = 1
+    ## other hyperparameters
+    param.hp.num_iter = 100
+    param.hp.extend_training_until_no_new_ser_highscore = True
+    param.hp.num_epochs_after_last_highscore = 200
+    param.hp.epsilon = epsilon
+    param.hp.sigma = sigma
+    param.hp.lambda_denoising_loss = lambda_denoiser
+    param.hp.loss_type = "l_2"
+    param.hp.batch_size_training = 1
+    param.hp.batch_size_validation = 1
 
-            text_description = "s_t {} sx {} out_scale {} eps {} sigma {} lambda {} reference".format(st, param.fmlp.spatial_coordinate_scales[0], param.fmlp.out_scale, param.hp.epsilon, param.hp.sigma, param.hp.lambda_denoising_loss)
-            
-            ## Experiment configuration
-            param_series = SimpleNamespace()
-            param_series.series_dir = "results/phantom3/KFMLP/validation/{}/l_2/".format(param.data.Nk)
-            create_dir(param_series.series_dir)
+    text_description = "s_t {} sx {} out_scale {} eps {} sigma {} lambda {} reference".format(st, param.fmlp.spatial_coordinate_scales[0], param.fmlp.out_scale, param.hp.epsilon, param.hp.sigma, param.hp.lambda_denoising_loss)
+    
+    ## Experiment configuration
+    param_series = SimpleNamespace()
+    param_series.series_dir = "results/phantom3/KFMLP/validation/{}/l_2/".format(param.data.Nk)
+    create_dir(param_series.series_dir)
 
-            # copy all additional files to the series directory (so they are not changed during execution)
-            experiment_script_path = __file__
-            main_model_path = "src/models/kspace-fmlp.py"
-            os.popen('cp {} {}'.format(experiment_script_path, param_series.series_dir))
-            os.popen('cp {} {}'.format(main_model_path, param_series.series_dir))
-            series_script_path = os.path.join(param_series.series_dir, os.path.basename(experiment_script_path))
-            series_model_path = os.path.join(param_series.series_dir, os.path.basename(main_model_path))
+    # copy all additional files to the series directory (so they are not changed during execution)
+    experiment_script_path = __file__
+    main_model_path = "src/models/kspace-fmlp.py"
+    os.popen('cp {} {}'.format(experiment_script_path, param_series.series_dir))
+    os.popen('cp {} {}'.format(main_model_path, param_series.series_dir))
+    series_script_path = os.path.join(param_series.series_dir, os.path.basename(experiment_script_path))
+    series_model_path = os.path.join(param_series.series_dir, os.path.basename(main_model_path))
 
-            ## basic parameters
-            param.experiment.results_dir = os.path.join(param_series.series_dir, text_description)
-            param.experiment.model_file_path = series_model_path
-            param.experiment.script_file_path = series_script_path
-            param.experiment.model_save_frequency = 100
-            param.experiment.video_evaluation_frequency = 100
-            param.experiment.validation_evaluation_frequency = 1
-            param.experiment.evaluate_reference_metrics = True
-            param.experiment.reference_evaluation_frequency = 1
+    ## basic parameters
+    param.experiment.results_dir = os.path.join(param_series.series_dir, text_description)
+    param.experiment.model_file_path = series_model_path
+    param.experiment.script_file_path = series_script_path
+    param.experiment.model_save_frequency = 100
+    param.experiment.video_evaluation_frequency = 100
+    param.experiment.validation_evaluation_frequency = 1
+    param.experiment.evaluate_reference_metrics = True
+    param.experiment.reference_evaluation_frequency = 1
 
-            param.metrics.img_scaling = 1.
-            param.metrics.ssim=True
-            param.metrics.psnr=False
-            param.metrics.ser=False
-            param.metrics.hfen=False
-            param.metrics.brisque=False
-            param.metrics.vif=True
-            param.metrics.mse=True
-            param.metrics.crossection_vif=False
+    param.metrics.img_scaling = 1.
+    param.metrics.ssim=True
+    param.metrics.psnr=False
+    param.metrics.ser=False
+    param.metrics.hfen=False
+    param.metrics.brisque=False
+    param.metrics.vif=True
+    param.metrics.mse=True
+    param.metrics.crossection_vif=False
 
-            param.experiment.validation_subset_max_line_index = torch.max(dataset[224]["line_indices"])
+    param.experiment.validation_subset_max_line_index = torch.max(dataset[224]["line_indices"])
 
-            # free memory
-            del dataset, validation_dataset
+    # free memory
+    del dataset, validation_dataset
 
-            print("Running experiment", param.experiment.results_dir, "...")
-            run_experiment(param)
+    print("Running experiment", param.experiment.results_dir, "...")
+    run_experiment(param)
         
 

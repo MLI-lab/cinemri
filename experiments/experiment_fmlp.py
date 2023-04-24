@@ -122,19 +122,14 @@ if __name__ == '__main__':
 
     print("Selected GPU", gpu)
 
-    for asd in [1]:
-        dataset_nr = 15
-        st = 1.
-        sx = 30.
-        layer_width = 512
-        num_layers = 7
-        Nk = 225
+    # loop over a grid of parameter configurations
+    for sx in [10., 30., 100.]:
 
         np.random.seed(1998)
         random.seed(1998)
         torch.manual_seed(1998)
 
-        cava_v1_measurement_number = dataset_nr
+        cava_v1_measurement_number = 10
         dataset_info = datasets_cava_v1[cava_v1_measurement_number]
 
         param = SimpleNamespace()
@@ -184,16 +179,16 @@ if __name__ == '__main__':
         # FMLP parameters
         param.fmlp.spatial_in_features = 2
         param.fmlp.spatial_fmap_width = 512
-        param.fmlp.spatial_coordinate_scales = [30., 30.] # spatial coordinate scale in [1/m]
+        param.fmlp.spatial_coordinate_scales = [sx, sx] # spatial coordinate scale in [1/m]
                     
         param.fmlp.temporal_in_features = 1
         param.fmlp.temporal_fmap_width = 128
-        param.fmlp.temporal_coordinate_scales = [st] # temporal coordinate scale in [1/s]
+        param.fmlp.temporal_coordinate_scales = [1.] # temporal coordinate scale in [1/s]
 
-        param.fmlp.mlp_width = layer_width
+        param.fmlp.mlp_width = 512
         param.fmlp.mlp_sigma = 0.01
         param.fmlp.mlp_scale = 1.
-        param.fmlp.mlp_hidden_layers = num_layers
+        param.fmlp.mlp_hidden_layers = 7
         param.fmlp.mlp_hidden_bias = True
 
         param.fmlp.mlp_out_features = 2
@@ -218,7 +213,7 @@ if __name__ == '__main__':
         param.hp.num_epochs_after_last_highscore = 200
         param.hp.lambda_tv = 0.
 
-        text_description = "s_t {} s_x {} mlp_width {} mlp_layers {}".format(st, param.fmlp.spatial_coordinate_scales[0], param.fmlp.mlp_width, param.fmlp.mlp_hidden_layers)
+        text_description = "s_t {} s_x {} mlp_width {} mlp_layers {}".format(param.fmlp.temporal_coordinate_scales[0], param.fmlp.spatial_coordinate_scales[0], param.fmlp.mlp_width, param.fmlp.mlp_hidden_layers)
         
         ## Experiment configuration
         param_series = SimpleNamespace()

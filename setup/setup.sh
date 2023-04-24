@@ -26,6 +26,7 @@ pip install pydicom
 pip install moviepy
 conda install --yes -c conda-forge tensorboard=2.9.1
 
+# install bart toolbox for MRI reconstruction
 cd /workspace
 git clone https://github.com/mrirecon/bart.git
 cd bart
@@ -35,10 +36,9 @@ export TOOLBOX_PATH=/workspace/bart
 
 apt install ffmpeg
 apt install zip unzip
-
 pip install pyrtools
 
-
+# install tool for encoding mp4 videos with a variable frame rate
 cd /workspace
 git clone https://github.com/nu774/mp4fpsmod.git
 cd mp4fpsmod
@@ -49,7 +49,7 @@ apt install --yes libtool
 make
 make install
 
-
+# installation of VUE and gitlab-runner for the deployment of the supplementary website
 cd /workspace
 apt get update
 apt install --yes curl
@@ -58,6 +58,5 @@ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
 source ~/.bashrc
 nvm install v16.19.0
 npm install -g @vue/cli
-
 curl -LJO "https://gitlab-runner-downloads.s3.amazonaws.com/latest/deb/gitlab-runner_amd64.deb"
 dpkg -i gitlab-runner_amd64.deb

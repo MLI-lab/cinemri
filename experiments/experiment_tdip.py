@@ -122,17 +122,14 @@ if __name__ == '__main__':
 
     print("Selected GPU", gpu)
 
-    for asd in [1]:
-        dataset_nr = 20
-        z_slack = 0.5
-        num_channels = 256
-        Nk = 225
+
+    for Nk in [225, 450, 900]:
 
         np.random.seed(1998)
         random.seed(1998)
         torch.manual_seed(1998)
 
-        cava_v1_measurement_number = dataset_nr
+        cava_v1_measurement_number = 10
         dataset_info = datasets_cava_v1[cava_v1_measurement_number]
 
         param = SimpleNamespace()
@@ -173,7 +170,7 @@ if __name__ == '__main__':
         phys_info = physlog.single_marker_cardiac_and_respiratoy_info(sample_times=param.data.frame_times)
         param.data.cardiac_phases = phys_info["cardiac_phases"]
         param.data.cardiac_cycles = phys_info["cardiac_cycles"]
-         ## Decoder parameters
+            ## Decoder parameters
         # native TDIP decoder parameters
         param.decoder.in_features = 3
         param.decoder.out_features = 2
@@ -181,7 +178,7 @@ if __name__ == '__main__':
         param.decoder.map_net_out_size = [6, 8]
         param.decoder.num_stages = 6
         param.decoder.num_conv = 2
-        param.decoder.conv_channels = num_channels
+        param.decoder.conv_channels = 256
         param.decoder.conv_bias = False
         param.decoder.output_scaling = 32.
 
@@ -200,7 +197,7 @@ if __name__ == '__main__':
 
         param.trajectory.type = "helix"
         param.trajectory.L = 3
-        param.trajectory.z_slack = [z_slack*z_slack_factor] # pseudo-random slack
+        param.trajectory.z_slack = [0.5*z_slack_factor] # pseudo-random slack
         param.trajectory.p = param.data.cardiac_cycles[param.data.Nk-1] + param.data.cardiac_phases[param.data.Nk-1] - param.data.cardiac_phases[0]
         param.trajectory.equal_frame_size = False
 
@@ -218,7 +215,7 @@ if __name__ == '__main__':
         param.hp.num_epochs_after_last_highscore = 200
         param.hp.lambda_tv = 0.
 
-        text_description = "z {} channels {}".format(z_slack, num_channels)
+        text_description = "z {} channels {}".format(param.trajectory.z_slack[0], param.decoder.conv_channels)
         
         ## Experiment configuration
         param_series = SimpleNamespace()
