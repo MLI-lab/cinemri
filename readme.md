@@ -19,9 +19,7 @@ The datasets are too large to be submitted together with the code. However, the 
 ## Licence
 
 
-## Supplementary materials
-### Reconstructed videos
-
+##  Reconstructed videos
 #### Low-resolution high-SNR dataset
 The video below shows the reconstructions of the low-resolution high-SNR dataset by the FMLP, the KFMLP, and the t-DIP for an acquisition time of $4s$ ($T = 225$). An ECG-gated breath-hold (BH) dataset was reconstructed using classical sparsity-based methods and is shown as visual reference. It can be seen that the reconstruction quality of the FMLP and the t-DIP are on par, whereas the KFMLP suffers aliasing-like artifacts. 
 
