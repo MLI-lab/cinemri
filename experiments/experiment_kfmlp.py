@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 from src import *
-from data.scanner.CAVA_V1 import datasets_cava_v1
+from data import datasets
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -129,8 +129,8 @@ if __name__ == '__main__':
         random.seed(1998)
         torch.manual_seed(1998)
 
-        cava_v1_measurement_number = 10
-        dataset_info = datasets_cava_v1[cava_v1_measurement_number]
+        measurement_number = 10
+        dataset_info = datasets[measurement_number]
 
         param = SimpleNamespace()
         param.experiment = SimpleNamespace()
@@ -213,11 +213,11 @@ if __name__ == '__main__':
         param.hp.batch_size_training = 1
         param.hp.batch_size_validation = 1
 
-        text_description = "s_t {} sx {} out_scale {} eps {} sigma {} lambda {}".format(st, param.fmlp.spatial_coordinate_scales[0], param.fmlp.out_scale, param.hp.epsilon, param.hp.sigma, param.hp.lambda_denoising_loss)
+        text_description = "s_t {} sx {} out_scale {} eps {} sigma {} lambda {}".format(param.fmlp.temporal_coordinate_scales[0], param.fmlp.spatial_coordinate_scales[0], param.fmlp.out_scale, param.hp.epsilon, param.hp.sigma, param.hp.lambda_denoising_loss)
         
         ## Experiment configuration
         param_series = SimpleNamespace()
-        param_series.series_dir = "results/cava_v1/{}/KFMLP/validation/{}/hdr/".format(cava_v1_measurement_number, param.data.Nk)
+        param_series.series_dir = "results/{}/KFMLP/validation/{}/hdr/".format(measurement_number, param.data.Nk)
         create_dir(param_series.series_dir)
 
         # copy all additional files to the series directory (so they are not changed during execution)

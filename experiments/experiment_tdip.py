@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 from src import *
-from data.scanner.CAVA_V1 import datasets_cava_v1
+from data import datasets
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -129,8 +129,8 @@ if __name__ == '__main__':
         random.seed(1998)
         torch.manual_seed(1998)
 
-        cava_v1_measurement_number = 10
-        dataset_info = datasets_cava_v1[cava_v1_measurement_number]
+        measurement_number = 10
+        dataset_info = datasets[measurement_number]
 
         param = SimpleNamespace()
         param.experiment = SimpleNamespace()
@@ -219,7 +219,7 @@ if __name__ == '__main__':
         
         ## Experiment configuration
         param_series = SimpleNamespace()
-        param_series.series_dir = "results/cava_v1/{}/TDIP/validation/{}/".format(cava_v1_measurement_number, param.data.Nk)
+        param_series.series_dir = "results/{}/TDIP/validation/{}/".format(measurement_number, param.data.Nk)
         create_dir(param_series.series_dir)
 
         # copy all additional files to the series directory (so they are not changed during execution)
