@@ -48,15 +48,3 @@ apt install --yes libtool
 ./configure
 make
 make install
-
-# installation of VUE and gitlab-runner for the deployment of the supplementary website
-cd /workspace
-apt get update
-apt install --yes curl
-apt install --yes npm
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
-source ~/.bashrc
-nvm install v16.19.0
-npm install -g @vue/cli
-curl -LJO "https://gitlab-runner-downloads.s3.amazonaws.com/latest/deb/gitlab-runner_amd64.deb"
-dpkg -i gitlab-runner_amd64.deb
