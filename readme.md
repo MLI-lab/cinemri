@@ -1,6 +1,7 @@
 # Implicit Neural Networks with Fourier-Feature Inputs for Free-breathing Cardiac MRI Reconstruction
 
 ## Updates
+The work was submitted to IEEE TMI on May 23, 2023.
 
 ## Setup
 1. Setup a docker container with support for Nvidia GPUs and pytorch. 
@@ -13,14 +14,13 @@ chmod +x ./setup/setup.sh
 4. Configure and run the experiment scripts in the `experiments/` folder.
 
 ## Datasets
-Three datasets are available on IEEE DataPort, the low-resolution high-SNR, the low-resolution low-SNR, and the high-resolution dataset.
+The low-resolution high-SNR, the low-resolution low-SNR, and the high-resolution dataset are available on IEEEDataPort, see [https://dx.doi.org/10.21227/f057-dw29](https://dx.doi.org/10.21227/f057-dw29). The datasets need to be copied into the data folder of the project.
 
 ## Licence
 
-
 ##  Reconstructed videos
 #### Low-resolution high-SNR dataset
-The video below shows the reconstructions of the low-resolution high-SNR dataset by the FMLP, the KFMLP, and the t-DIP for an acquisition time of $4s$ ($T = 225$). An ECG-gated breath-hold (BH) dataset was reconstructed using classical sparsity-based methods and is shown as visual reference. It can be seen that the reconstruction quality of the FMLP and the t-DIP are on par, whereas the KFMLP suffers aliasing-like artifacts. 
+The video below shows the reconstructions of the low-resolution high-SNR dataset by the FMLP, the KFMLP, and the t-DIP for an acquisition time of $4s$ ($T = 225$). An ECG-gated breath-hold (BH) dataset was reconstructed using classical sparsity-based methods and is shown as visual reference. It can be seen that the reconstruction quality of the FMLP and the t-DIP are on par, whereas the KFMLP suffers aliasing-like artifacts.
 
 ![Reconstructions of the low-resolution high-SNR dataset with the FMLP, KFMLP, and t-DIP.](media/lowres_highsnr/all_methods_225/timecoded_cfr.gif)
 

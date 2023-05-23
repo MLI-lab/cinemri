@@ -4,11 +4,11 @@ from typing import Iterable
 import torch
 import numpy as np
 from .transforms import *
-from .helpers import *
+
 
 class Dataset():
     """ 
-        This class stores a Cartesian dataset without zeros in the k-space and stores a tensor of measured k-space coordinates (trajectory) instead of a sampling mask. 
+        This class stores a Cartesian dataset without zeros in the k-space and stores a tensor of measured k-space coordinates (trajectory). 
         
         attributes:
         - `kspace`: shape (Nl, Nc, Nr, 2) contains the complex k-space measurements (real, imaginary part in last dimension)
