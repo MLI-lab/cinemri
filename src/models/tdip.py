@@ -1,9 +1,5 @@
-from cmath import isnan
-from ctypes import ArgumentError
-from random import random
 import torch
 from torch import nn
-import torchkbnufft as tkbn
 
 import numpy as np
 import torchvision
@@ -127,9 +123,7 @@ class ReconstructionMethod():
         parameters = [x for x in self.decoder.parameters()]
         self.optimizer = torch.optim.Adam(parameters, **vars(self.param.optimizer))
 
-        self.metrics = PerformanceMetrics(**vars(param.metrics))
-
-        self.forward_operator = ForwardOperator(dataset_type=self.param.data.dataset_type, Ny=param.data.Ny, Nx=param.data.Nx).type(dtype)
+        self.forward_operator = ForwardOperator().type(dtype)
     
     def init_helix_trajectory(self):
         assert len(self.param.trajectory.z_slack) == self.param.trajectory.L - 2
@@ -250,9 +244,6 @@ class ReconstructionMethod():
         max_ser_epoch = 0
         max_ser_subset = float('-inf')
 
-        max_ssim = 0.
-        max_vif = 0.
-
         i = 1
         num_epochs = self.param.hp.num_iter
         while i <= num_epochs: # iterate over epochs
@@ -301,23 +292,6 @@ class ReconstructionMethod():
                 self.writer.add_figure("latent_space/pca", fig_pca, i)
             
 
-            if dataset.reference is not None and self.param.experiment.evaluate_reference_metrics and (i%self.param.experiment.reference_evaluation_frequency == 0 or i==self.param.hp.num_iter-1 or i == 1):
-                self.metrics.clear()
-                for k in self.param.data.sample_indices:
-                    img = self.evaluate_abs(k).detach()
-                    self.metrics.add(img.squeeze(), torch.tensor(dataset.reference[k, 0, :, :]))
-                self.metrics.save_all_to_history(i)
-                self.metrics.save_history_to_file(os.path.join(training_dir, "metrics.pth"))
-                mean_ssim = np.mean(np.array(self.metrics.history["ssim"][-1]))
-                mean_vif = np.mean(np.array(self.metrics.history["vif"][-1]))
-                self.writer.add_scalar('performance/ssim', mean_ssim, i)
-                self.writer.add_scalar('performance/vif', mean_vif, i)
-                max_ssim = max(max_ssim, mean_ssim)
-                max_vif =  max(max_vif, mean_vif)
-                self.writer.add_scalar('performance/max_ssim', max_ssim, i)
-                self.writer.add_scalar('performance/max_vif', max_vif, i)
-                self.metrics.clear()
-
             if i%self.param.experiment.video_evaluation_frequency == 0 or i==self.param.hp.num_iter-1 or i == 1:
                 imgs = torch.stack([self.evaluate_abs(k).detach().cpu() for k in self.param.data.sample_indices], dim=0)
                 if "max_intensity_value" in vars(self.param.data).keys():
@@ -358,15 +332,6 @@ class ReconstructionMethod():
             i += 1
 
         print("\n") # clear stdout
-                
-    def evaluate_metrics(self, dataset, iteration, clear_afterwards=True):
-        self.metrics.clear()
-        for k, sample in enumerate(dataset):
-            img = torch.tensor(self.evaluate_abs(k).squeeze())
-            self.metrics.add(img, sample["reference"])
-        self.metrics.save_all_to_history(iteration)
-        if clear_afterwards:
-            self.metrics.clear()
 
     
     def evaluate_validation(self, dataloader_validation):
@@ -377,16 +342,16 @@ class ReconstructionMethod():
         squared_error_subset = torch.tensor(0., dtype=torch.float64)
         squared_signal_subset = torch.tensor(0., dtype=torch.float64)
 
+        frame_times = self.param.data.frame_times.type(dtype)
+
         for sample in dataloader_validation:
             sample = copySampleToGPU(sample)
             with torch.no_grad():
-                img = self.evaluate(sample["indices"])
+                # find training frame that is closest in time
+                k = torch.argmin(torch.abs(frame_times - sample["t_k"]))
+                img = self.evaluate([k])
 
-            if "mask" in sample.keys(): # cartesian dataset
-                kspace_rec = self.forward_operator.forward_sparse_cartesian(img, smaps, sample["mask"])
-            else:
-                kspace_rec = self.forward_operator.forward_non_cartesian(img, smaps, sample["trajectory"])
-                kspace_rec *= self.param.data.nufft_scaling_factor # compensate for scaling due to the NUFFT and the reconstruction via IFFT
+            kspace_rec = self.forward_operator.forward(img, sample, smaps)
 
             se = torch.sum(torch.square(kspace_rec - sample["kspace"]).flatten(start_dim=1), dim=-1).detach() # squared error
             ss = torch.sum(torch.square(sample["kspace"]).flatten(start_dim=1), dim=-1).detach() # squared signal
@@ -407,11 +372,6 @@ class ReconstructionMethod():
         return ser, ser_subset
     
     def transform(self, sample):
-
-        reference = None
-        if sample["reference"] is not None:
-            reference = sample["reference"].squeeze()
-
         # compute the time at the center of the frames
         t_k = self.param.data.tr / 2. * (sample["line_indices"][:, 0] + sample["line_indices"][:, -1]).type(torch.float32)
 
@@ -420,8 +380,7 @@ class ReconstructionMethod():
             "t_k": t_k,
             "line_indices": sample["line_indices"],
             "indices": sample["indices"],
-            "mask": sample["mask"],
-            "reference": reference
+            "mask": sample["mask"]
         }
 
         return new_sample

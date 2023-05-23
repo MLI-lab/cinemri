@@ -9,12 +9,11 @@
 chmod +x ./setup/setup.sh
 ./setup/setup.sh
 ```
-3. Download the datasets and copy them into your project.
+3. Download the datasets and copy them into the `data` folder in your project.
 4. Configure and run the experiment scripts in the `experiments/` folder.
 
-
 ## Datasets
-The datasets are too large to be submitted together with the code. However, the datasets will be linked here on Github soon.
+Three datasets are available on IEEE DataPort, the low-resolution high-SNR, the low-resolution low-SNR, and the high-resolution dataset.
 
 ## Licence
 

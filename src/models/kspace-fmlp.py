@@ -50,144 +50,6 @@ class FourierFeatureMap(nn.Module):
         return torch.cat((np.sqrt(2)*torch.sin(self.linear(self.coordinate_scales*input)), 
                           np.sqrt(2)*torch.cos(self.linear(self.coordinate_scales*input))), dim=-1)
 
-class DirichletFeatureMap(nn.Module):
-    def __init__(self, in_features, out_features, sigma, resolution):
-        super().__init__()
-        assert out_features % (2 * in_features) == 0
-
-        self.num_freq = out_features // (2 * in_features)
-        self.out_features = out_features
-
-        self.resolution = nn.Parameter(torch.tensor(resolution, dtype=torch.float32)) # ((Nz,) Ny, Nx)
-        self.resolution.requires_grad = False
-
-        self.frequencies = nn.Parameter(torch.zeros(in_features, self.num_freq)) 
-        self.frequencies.requires_grad = False
-
-        with torch.no_grad():
-            self.frequencies.normal_(std=1, mean=0)
-            self.frequencies *= torch.tensor(sigma).squeeze().unsqueeze(dim=-1) # sigma: (in_features), std of the Gaussian frequency distribution in each dimension
-
-
-    def forward(self, input):
-        # input: (N, in_features)
-        # output: (N, out_features) = (N, [ReDim1, ReDim2, ReDim3, ImDim1, ImDim2, ImDim3]), for in_features = 3
-
-        # self.frequencies: (in_features, num_freq)
-
-        n = torch.floor(self.resolution / 2)
-
-        positive_shift = input.unsqueeze(dim=-1) + self.frequencies.unsqueeze(dim=0) # add (N, input_features, 1) and (1, input_features, num_freq) -> (N, input_features, num_freq)
-        negative_shift = input.unsqueeze(dim=-1) - self.frequencies.unsqueeze(dim=0)
-
-        positive_dirichlet = torch.sin((n + 0.5).unsqueeze(dim=0).unsqueeze(dim=-1) * positive_shift) / torch.sin(0.5 * positive_shift) # (N, input_features, num_freq)
-        negative_dirichlet = torch.sin((n + 0.5).unsqueeze(dim=0).unsqueeze(dim=-1) * negative_shift) / torch.sin(0.5 * negative_shift) # (N, input_features, num_freq)
-
-        cos = (0.5 / torch.sqrt(self.resolution)).unsqueeze(dim=0).unsqueeze(dim=-1) * (positive_dirichlet + negative_dirichlet) # (N, input_features, num_freq)
-        sin = (0.5 / torch.sqrt(self.resolution)).unsqueeze(dim=0).unsqueeze(dim=-1) * (negative_dirichlet - positive_dirichlet) # (N, input_features, num_freq)
-
-        correction = 2.*torch.cos(self.frequencies).unsqueeze(dim=0)*torch.cos(0.5*self.resolution.unsqueeze(dim=0)*input).unsqueeze(dim=-1) * (self.resolution % 2.).unsqueeze(dim=0).unsqueeze(dim=-1) # (N, input_features, num_freq)
-        cos += correction
-
-        return Normalization(torch.concat((
-            cos.flatten(start_dim=1),
-            sin.flatten(start_dim=1),
-        ), dim=-1)) # (N, 2 * input_features * num_freq = output_features)
-    
-
-# class DirichletFeatureMap(nn.Module):
-#     def __init__(self, in_features, out_features, sigma, resolution):
-#         super().__init__()
-#         assert out_features % (2 * in_features) == 0
-
-#         self.num_freq = out_features // 2
-#         self.out_features = out_features
-
-#         self.resolution = nn.Parameter(torch.tensor(resolution, dtype=torch.float32)) # ((Nz,) Ny, Nx)
-#         self.resolution.requires_grad = False
-
-#         self.frequencies = nn.Parameter(torch.zeros(in_features, self.num_freq)) 
-#         self.frequencies.requires_grad = False
-
-#         with torch.no_grad():
-#             self.frequencies.normal_(std=1, mean=0)
-#             self.frequencies *= torch.tensor(sigma).squeeze().unsqueeze(dim=-1) # sigma: (in_features), std of the Gaussian frequency distribution in each dimension
-
-
-#     def forward(self, input):
-#         # input: (N, in_features)
-#         # output: (N, out_features) = (N, [ReDim1, ReDim2, ReDim3, ImDim1, ImDim2, ImDim3]), for in_features = 3
-
-#         # self.frequencies: (in_features, num_freq)
-
-#         n = torch.floor(self.resolution / 2)
-
-#         positive_shift = input.unsqueeze(dim=-1) + self.frequencies.unsqueeze(dim=0) # add (N, input_features, 1) and (1, input_features, num_freq) -> (N, input_features, num_freq)
-#         negative_shift = input.unsqueeze(dim=-1) - self.frequencies.unsqueeze(dim=0)
-
-#         positive_dirichlet = torch.sin((n + 0.5).unsqueeze(dim=0).unsqueeze(dim=-1) * positive_shift) / torch.sin(0.5 * positive_shift) # (N, input_features, num_freq)
-#         negative_dirichlet = torch.sin((n + 0.5).unsqueeze(dim=0).unsqueeze(dim=-1) * negative_shift) / torch.sin(0.5 * negative_shift) # (N, input_features, num_freq)
-
-#         pos_prod = torch.prod(positive_dirichlet, dim=1)
-#         neg_prod = torch.prod(negative_dirichlet, dim=1)
-
-#         cos = (0.5 / torch.prod(torch.sqrt(self.resolution))) * (pos_prod + neg_prod) # (N, num_freq)
-#         sin = (0.5 / torch.prod(torch.sqrt(self.resolution))) * (neg_prod - pos_prod) # (N, num_freq)
-
-#         # correction = 2.*torch.cos(self.frequencies).unsqueeze(dim=0)*torch.cos(0.5*self.resolution.unsqueeze(dim=0)*input).unsqueeze(dim=-1) * (self.resolution % 2.).unsqueeze(dim=0).unsqueeze(dim=-1) # (N, input_features, num_freq)
-#         # cos += correction
-
-#         return Normalization(torch.concat((
-#             cos,
-#             sin,
-#         ), dim=-1)) # (N, 2 * num_freq = output_features)
-        
-# class DirichletFeatureMap(nn.Module):
-#     def __init__(self, in_features, out_features, sigma, resolution):
-#         super().__init__()
-#         assert out_features % (2 * in_features) == 0
-
-#         self.sigma = torch.tensor(sigma)
-
-#         self.num_freq = out_features // 2
-#         self.out_features = out_features
-
-#         self.resolution = nn.Parameter(torch.tensor(resolution, dtype=torch.float32)) # ((Nz,) Ny, Nx)
-#         self.resolution.requires_grad = False
-
-#         self.linear = nn.Linear(in_features, self.num_freq, bias=False)
-#         self.linear.weight.requires_grad = False
-#         with torch.no_grad():
-#             self.linear.weight.normal_(std=sigma[0], mean=0)
-
-#         y = 2. * torch.pi * (-int(resolution[0]/2.) + torch.arange(float(resolution[0]))) / resolution[0]
-#         x = 2. * torch.pi * (-int(resolution[1]/2.) + torch.arange(float(resolution[1]))) / resolution[1]
-#         coordinate_grid = torch.stack(torch.meshgrid(y, x, indexing="ij"), dim=-1)
-#         self.coordinate_grid = coordinate_grid
-#         fmap_cos = np.sqrt(2)*torch.cos(self.linear(self.sigma*coordinate_grid) + torch.pi/4)
-#         fmap_sin = np.sqrt(2)*torch.sin(self.linear(self.sigma*coordinate_grid) + torch.pi/4)
-#         self.dfmap_cos = fft2(torch.stack((fmap_cos, torch.zeros_like(fmap_cos)), dim=-1))[..., 0] # only keep real part
-#         self.dfmap_sin = fft2(torch.stack((fmap_sin, torch.zeros_like(fmap_cos)), dim=-1))[..., 1] # only keep imaginary part
-        
-#         fmap_ifft = ifft2(torch.stack((self.dfmap_cos, torch.zeros_like(fmap_cos)), dim=-1))[...,0]
-#         print(torch.max(torch.abs(self.dfmap_cos[...,0]))), print(torch.max(torch.abs(self.dfmap_cos[...,1])))
-#         plt.imshow(fmap_ifft[...,1])
-        
-#     def forward(self, input):
-#         # input: (N, in_features)
-#         # output: (N, out_features) = (N, [ReDim1, ReDim2, ReDim3, ImDim1, ImDim2, ImDim3]), for in_features = 3
-#         input = self.coordinate_grid.flatten(end_dim=-2).type(dtype)
-        
-#         # self.frequencies: (in_features, num_freq)
-#         n = torch.floor(self.resolution / 2)
-#         indices = torch.round(self.resolution.unsqueeze(dim=0) * input / (2*torch.pi)) + n.unsqueeze(dim=0)
-#         indices = indices.type(torch.int64)
-
-#         return Normalization(torch.concat((
-#             self.dfmap_cos[indices[:,0], indices[:,1], :],
-#             self.dfmap_sin[indices[:,0], indices[:,1], :]
-#         ), dim=-1)) # (N, 2 * num_freq = output_features)
-        
 ### normalization ###
 def Normalization(input):  
     if len(input.shape)==3:
@@ -203,8 +65,6 @@ def Normalization(input):
 ### networks ###
 class FMLP(nn.Module):
     def __init__(self,
-                spatial_feature_map,
-
                 spatial_in_features,
                 spatial_fmap_width,
                 spatial_coordinate_scales,
@@ -224,21 +84,14 @@ class FMLP(nn.Module):
                 mlp_final_sigma,
                 mlp_final_bias,
 
-                out_scale,
-
-                # extra parameters of the DirichletFeatureMap
-                resolution=None
+                out_scale
                 ):
         super().__init__()
 
         self.spatial_in_features = spatial_in_features
         self.temporal_in_features = temporal_in_features
 
-        if spatial_feature_map == "fourier_features":
-            self.spatial_fmap = FourierFeatureMap(spatial_in_features, spatial_fmap_width, spatial_coordinate_scales)
-        elif spatial_feature_map == "dirichlet_features":
-            self.spatial_fmap = DirichletFeatureMap(spatial_in_features, spatial_fmap_width, spatial_coordinate_scales, resolution)
-
+        self.spatial_fmap = FourierFeatureMap(spatial_in_features, spatial_fmap_width, spatial_coordinate_scales)
         self.temporal_fmap = FourierFeatureMap(temporal_in_features, temporal_fmap_width, temporal_coordinate_scales)
 
         self.mlp = nn.Sequential()
@@ -279,12 +132,9 @@ class ReconstructionMethod():
 
         self.kspace_coordinate_grid = self.get_kspace_coordinate_grid().type(dtype)
 
-        self.forward_operator = ForwardOperator(dataset_type=self.param.data.dataset_type, Ny=param.data.Ny, Nx=param.data.Nx).type(dtype)
+        self.forward_operator = ForwardOperator().type(dtype)
 
         self.weighted_smaps = None
-
-        if param.experiment.evaluate_reference_metrics:
-            self.metrics = PerformanceMetrics(**vars(param.metrics))
 
 
     def get_kspace_coordinate_grid(self):
@@ -407,8 +257,6 @@ class ReconstructionMethod():
         max_ser_epoch = 0
         max_ser_subset = float('-inf')
 
-        max_ssim = 0.
-        max_vif = 0.
 
         # inital number of training epochs. It can be prolonged if self.param.hp.extend_training_until_no_new_ser_highscore is true.
         num_epochs = self.param.hp.num_iter
@@ -470,25 +318,6 @@ class ReconstructionMethod():
                 imgs = imgs.unsqueeze(dim=0) # format to: B=1, N, C=1, H, W
                 self.writer.add_video("video", imgs, i, self.param.data.frame_rate)
 
-            # compute full-reference image quality metrics
-            if dataset.reference is not None and self.param.experiment.evaluate_reference_metrics and (i%self.param.experiment.reference_evaluation_frequency == 0 or i==self.param.hp.num_iter-1 or i == 1):
-                self.metrics.clear()
-                for sample in dataset:
-                    img = self.evaluate_abs(sample).detach()
-                    self.metrics.add(img.squeeze(), torch.tensor(dataset.reference[sample["indices"][0], 0, :, :]))
-                self.metrics.save_all_to_history(i)
-                self.metrics.save_history_to_file(os.path.join(training_dir, "metrics.pth"))
-                mean_ssim = np.mean(np.array(self.metrics.history["ssim"][-1]))
-                mean_vif = np.mean(np.array(self.metrics.history["vif"][-1]))
-                self.writer.add_scalar('performance/ssim', mean_ssim, i)
-                self.writer.add_scalar('performance/vif', mean_vif, i)
-                max_ssim = max(max_ssim, mean_ssim)
-                max_vif =  max(max_vif, mean_vif)
-                self.writer.add_scalar('performance/max_ssim', max_ssim, i)
-                self.writer.add_scalar('performance/max_vif', max_vif, i)
-
-                self.metrics.clear()
-
             # compute validation metrics
             if validation_dataset is not None and i%self.param.experiment.validation_evaluation_frequency == 0 or i==self.param.hp.num_iter-1 or i == 1:
                 ser, ser_subset = self.evaluate_validation(dataloader_validation)
@@ -532,16 +361,17 @@ class ReconstructionMethod():
         squared_error_subset = torch.tensor(0., dtype=torch.float64)
         squared_signal_subset = torch.tensor(0., dtype=torch.float64)
 
+        frame_times = self.param.data.frame_times.type(dtype)
+
         for sample in dataloader_validation:
             sample = copySampleToGPU(sample)
             with torch.no_grad():
+                # find training frame that is closest in time
+                k = torch.argmin(torch.abs(frame_times.unsqueeze(dim=0) - sample["t_k"].unsqueeze(dim=1)), dim=1)
+                sample["t_k"] = frame_times[k]
                 img = self.evaluate(sample)
 
-            if "mask" in sample.keys(): # cartesian dataset
-                kspace_rec = self.forward_operator.forward_sparse_cartesian(img, smaps, sample["mask"])
-            else:
-                kspace_rec = self.forward_operator.forward_non_cartesian(img, smaps, sample["trajectory"])
-                kspace_rec *= self.param.data.nufft_scaling_factor # compensate for scaling due to the NUFFT and the reconstruction via IFFT
+            kspace_rec = self.forward_operator.forward(img, sample, smaps)
 
             se = torch.sum(torch.square(kspace_rec - sample["kspace"]).flatten(start_dim=1), dim=-1).detach() # squared error
             ss = torch.sum(torch.square(sample["kspace"]).flatten(start_dim=1), dim=-1).detach() # squared signal

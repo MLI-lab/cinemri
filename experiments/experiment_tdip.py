@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 from src import *
-from data import datasets
+from data.new_data import datasets
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -15,43 +15,15 @@ def load_dataset(param, model=None):
     transform = None
     if model is not None:
         transform = model.transform
+                                                     
+    dataset, validation_dataset = Dataset.load_from_matfile(param.data.dataset_info["matfile_path"],
+                                                            remove_padding=param.data.remove_padding,
+                                                            set_smaps_outside_to_one=param.data.set_smaps_outside_to_one,
+                                                            validation_percentage=param.data.validation_percentage,
+                                                            number_of_lines_per_frame=param.data.number_of_lines_per_frame,
+                                                            max_Nk=param.data.Nk,
+                                                            transform=transform)
 
-    if param.data.dataset_type == "cartesian":
-        dataset_orig = CartesianDataset.from_sparse_matfile2d(param.data.dataset_info["matfile_path"],
-                                                              param.data.dataset_info["listfile_path"],
-                                                              shift=param.data.shift,
-                                                              remove_padding=param.data.remove_padding,
-                                                              set_smaps_outside_to_one=param.data.set_smaps_outside_to_one)
-        dataset, validation_dataset = CartesianSliceDataset.rebin_cartesian_dataset_extract_validationset(dataset_orig,
-                                                                                                          param.data.dataset_info["listfile_path"],
-                                                                                                          validation_percentage=param.data.validation_percentage,
-                                                                                                          number_of_lines_per_frame=param.data.number_of_lines_per_frame,
-                                                                                                          max_Nk=param.data.Nk,
-                                                                                                          transform=transform
-                                                                                                          )
-    elif param.data.dataset_type == "sparse_cartesian":
-        dataset, validation_dataset = SparseCartesianDataset.from_sparse_matfile2d_extract_validation_dataset_rebin(param.data.dataset_info["matfile_path"],
-                                                                                                                    param.data.dataset_info["listfile_path"],
-                                                                                                                    remove_padding=param.data.remove_padding,
-                                                                                                                    shift=param.data.shift,
-                                                                                                                    set_smaps_outside_to_one=param.data.set_smaps_outside_to_one,
-                                                                                                                    validation_percentage=param.data.validation_percentage,
-                                                                                                                    number_of_lines_per_frame=param.data.number_of_lines_per_frame,
-                                                                                                                    max_Nk=param.data.Nk,
-                                                                                                                    transform=transform)
-    elif param.data.dataset_type == "non_cartesian": # non-cartesian
-        dataset, validation_dataset = NonCartesianDataset3D.from_mat_file_binned_validation(param.data.dataset_info["matfile_path"],
-                                                                                            param.data.dataset_info["listfile_path"],
-                                                                                            param.data.number_of_lines_per_frame,
-                                                                                            param.data.validation_percentage,
-                                                                                            convert_to_rad=True,
-                                                                                            has_norm_fac=True,
-                                                                                            transpose_smaps=False,
-                                                                                            max_Nk=param.data.Nk,
-                                                                                            transform=transform)
-    else:
-        raise Exception
-    
     return dataset, validation_dataset
 
 ## main function that executes an experiment
@@ -129,8 +101,8 @@ if __name__ == '__main__':
         random.seed(1998)
         torch.manual_seed(1998)
 
-        measurement_number = 10
-        dataset_info = datasets[measurement_number]
+        measurement_name = "lowres_highsnr"
+        dataset_info = datasets[measurement_name]
 
         param = SimpleNamespace()
         param.experiment = SimpleNamespace()
@@ -144,16 +116,13 @@ if __name__ == '__main__':
         ## Dataset Configuration
         param.data.dataset_info = dataset_info
         param.data.remove_padding = True
-        param.data.shift = True
         param.data.set_smaps_outside_to_one = True
-        param.data.dataset_type = "sparse_cartesian" if dataset_info["cartesian"] else "non_cartesian"
         param.data.number_of_lines_per_frame = 6
         param.data.validation_percentage = 5
         param.data.Nk = Nk
         param.data.sample_indices = list(range(param.data.Nk))
 
-        examcard = ExamCard(dataset_info["examcard_path"])
-        param.data.tr = examcard.parameters["Act. TR/TE (ms)"][0] * 1e-3
+        param.data.tr = dataset_info["tr"]
         param.data.frame_rate = 1 / (param.data.tr * param.data.number_of_lines_per_frame) # approximately if validation_percentage is low
 
         dataset, validation_dataset = load_dataset(param)
@@ -165,44 +134,30 @@ if __name__ == '__main__':
 
         param.data.frame_times = param.data.tr * (dataset.line_indices[:, 0] + dataset.line_indices[:, -1]) / 2 # t_k
 
-        # load Physlog and extract cardiac phase and respiratory state
-        physlog = PhysLogData(dataset_info["physlog_path"])
-        phys_info = physlog.single_marker_cardiac_and_respiratoy_info(sample_times=param.data.frame_times)
-        param.data.cardiac_phases = phys_info["cardiac_phases"]
-        param.data.cardiac_cycles = phys_info["cardiac_cycles"]
-            ## Decoder parameters
-        # native TDIP decoder parameters
+        # load cardiac phases
+        mat = scipy.io.loadmat(dataset_info["matfile_path"])
+        param.data.cardiac_phases = mat["ecg_cardiac_phases"][0][dataset.line_indices[:,0]]
+        param.data.cardiac_cycles = mat["ecg_cardiac_cycles"][0][dataset.line_indices[:,0]]
+
+        ## Decoder parameters
         param.decoder.in_features = 3
         param.decoder.out_features = 2
         param.decoder.out_size = [param.data.Ny, param.data.Nx]
-        param.decoder.map_net_out_size = [6, 8]
-        param.decoder.num_stages = 6
+        param.decoder.map_net_out_size = [6, 9]
+        param.decoder.num_stages = 5
         param.decoder.num_conv = 2
         param.decoder.conv_channels = 256
         param.decoder.conv_bias = False
         param.decoder.output_scaling = 32.
 
-        # ConvDecoder parameters
-        # param.decoder.in_features = 3
-        # param.decoder.map_net_out_size = [8, 8]
-        # param.decoder.out_size = [param.data.Ny, param.data.Nx]
-        # param.decoder.num_layers = 6
-        # param.decoder.num_input_channels = 1
-        # param.decoder.num_channels = 128
-        # param.decoder.upsample_mode = "nearest"
-        # param.decoder.bn_affine = True
-        # param.decoder.bias = False
-
-        z_slack_factor = param.data.Nk / 225
-
         param.trajectory.type = "helix"
         param.trajectory.L = 3
-        param.trajectory.z_slack = [0.5*z_slack_factor] # pseudo-random slack
+        param.trajectory.z_slack = [0.5]
         param.trajectory.p = param.data.cardiac_cycles[param.data.Nk-1] + param.data.cardiac_phases[param.data.Nk-1] - param.data.cardiac_phases[0]
         param.trajectory.equal_frame_size = False
 
-        print("cardiac cycles: ", phys_info["cardiac_cycles"][0], phys_info["cardiac_cycles"][param.data.Nk-1])
-        print("cardiac phases: ", phys_info["cardiac_phases"][0], phys_info["cardiac_phases"][param.data.Nk-1])
+        print("cardiac cycles: ", param.data.cardiac_cycles[0], param.data.cardiac_cycles[param.data.Nk-1])
+        print("cardiac phases: ", param.data.cardiac_phases[0], param.data.cardiac_phases[param.data.Nk-1])
         print("trajectory.p: ", param.trajectory.p)
 
         ## optimizer parameter
@@ -219,7 +174,7 @@ if __name__ == '__main__':
         
         ## Experiment configuration
         param_series = SimpleNamespace()
-        param_series.series_dir = "results/{}/TDIP/validation/{}/".format(measurement_number, param.data.Nk)
+        param_series.series_dir = "results/{}/TDIP/validation/{}/".format(measurement_name, param.data.Nk)
         create_dir(param_series.series_dir)
 
         # copy all additional files to the series directory (so they are not changed during execution)
