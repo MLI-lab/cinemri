@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 from src import *
-from data.new_data import datasets
+from data import datasets
 
 from torch.utils.tensorboard import SummaryWriter
 
