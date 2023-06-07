@@ -4,7 +4,7 @@ This repository contains the code for reproducing figures and results in the pap
 
 ## Citation
 ```
-@article{heckel_yilmaz_2020,
+@article{kunz_implicit_2023,
     author    = {Johannes F. Kunz and Stefan Ruschke and Reinhard Heckel},
     title     = {Implicit Neural Networks with Fourier-Feature Inputs for Free-breathing Cardiac MRI Reconstruction},
     journal   = {	arXiv:2305.06822},
