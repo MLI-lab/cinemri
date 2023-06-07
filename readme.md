@@ -1,7 +1,17 @@
 # Implicit Neural Networks with Fourier-Feature Inputs for Free-breathing Cardiac MRI Reconstruction
 
-## Updates
-The work was submitted to IEEE TMI on May 23, 2023.
+This repository contains the code for reproducing figures and results in the paper ``Implicit Neural Networks with Fourier-Feature Inputs for Free-breathing Cardiac MRI Reconstruction''.
+
+## Citation
+```
+@article{heckel_yilmaz_2020,
+    author    = {Johannes F. Kunz and Stefan Ruschke and Reinhard Heckel},
+    title     = {Implicit Neural Networks with Fourier-Feature Inputs for Free-breathing Cardiac MRI Reconstruction},
+    journal   = {	arXiv:2305.06822},
+    year      = {2023}
+}
+```
+
 
 ## Setup
 1. Setup a docker container with support for Nvidia GPUs and pytorch. 
@@ -40,3 +50,7 @@ The low-resoltion low-SNR dataset was reconstructed by the FMLP, the KFMLP, and 
 The reconstructions of high-resolution dataset for an acquisition time of $4s$ ($T=225$) are depricted below. Again, the FMLP and the t-DIP are similar in image quality. The KFMLP's reconstruction is obscured substantially by noise.
 
 ![Reconstructions of the high-resolution dataset with the FMLP, KFMLP, and t-DIP.](media/highres/all_methods_225/timecoded_cfr.gif)
+
+## Licence
+
+All files are provided under the terms of the Apache License, Version 2.0.
