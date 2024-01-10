@@ -8,8 +8,6 @@ LICENSE file in the root directory of this source tree.
 import numpy as np
 import torch
 
-
-
 def to_tensor(data):
     """
     Convert numpy array to PyTorch tensor. For complex arrays, the real and imaginary parts

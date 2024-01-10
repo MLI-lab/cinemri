@@ -65,6 +65,15 @@ def copySampleToGPU(entry):
             copy[k] = entry[k]
     return copy
 
+def copySampleToCPU(entry):
+    copy = {}
+    for k in entry.keys():
+        if torch.is_tensor(entry[k]):
+            copy[k] = entry[k].clone().to("cpu") # does detach make it faster?
+        else:
+            copy[k] = entry[k]
+    return copy
+
 def import_file(python_file_path):
     # import the model file
     spec = importlib.util.spec_from_file_location("module.name", os.path.abspath(python_file_path))
